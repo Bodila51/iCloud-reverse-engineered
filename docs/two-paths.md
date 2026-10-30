@@ -2,7 +2,9 @@
 
 Homecloud moves your iCloud Photos library to Immich on your own computer. Your iPhone then reaches it through Tailscale. There are two ways to get the old library out of iCloud, and both are fine choices. They end in the same place and differ only in how the photos get there.
 
-Claude Code explains both ways, asks you two or three questions, and recommends one. It runs nothing that changes your computer until you pick.
+This page is about iCloud Photos. If your photos are in Google Photos, read [Google Photos](#google-photos) below and [google-photos.md](google-photos.md).
+
+Claude Code explains both ways, recommends one with its reason, and asks you to pick. It runs nothing that changes your computer until you say yes to its plan.
 
 ## Path A: sign in to iCloud.com
 
@@ -75,7 +77,7 @@ Apple's own apps download the originals with the sign-in you already have on you
 - **B1, the Photos app on a Mac.** Photos downloads every original when you select **Download Originals to this Mac**. Then `scripts/mac/export_photos.py` copies them out and compares each file with its original in the Photos library, byte for byte. Your albums and favorites come along.
 - **B2, the Immich app on your iPhone, with any computer.** The app uploads your whole library to Immich. iOS fetches each original that lives only in iCloud. A big library takes hours or days. Keep the app open on its Backup screen, with the iPhone charging and on Wi-Fi.
 - **B3, iCloud for Windows on a PC.** It downloads every original to the iCloud Photos folder on drive C:, which needs room for your whole library. If the app is new on your PC, it asks you to sign in once, in Apple's own window. Large downloads can stall.
-- **B4, Apple's data copy.** At [privacy.apple.com](https://privacy.apple.com), you can ask Apple for a copy of your photos. You sign in there yourself, on Apple's own site. It is official, but it can take up to 7 days, and it arrives as zip archives that you download and unpack. No kit script reads these archives yet.
+- **B4, Apple's data copy.** At [privacy.apple.com](https://privacy.apple.com), you can ask Apple for a copy of your photos. You sign in there yourself, on Apple's own site. It is official, but it can take up to 7 days, and it arrives as zip archives. You download them and unpack them into the download folder, and then `scripts/immich/make_manifest.py` lists the files.
 
 What it costs:
 
@@ -106,12 +108,22 @@ Paths A and B1 need about 2.2 times your library, because the files land in a do
 
 ## Which one to pick
 
-There is no wrong pick. Claude Code asks you two or three questions and recommends one, with its reason:
+There is no wrong pick. Claude Code recommends one, with its reason, and you choose:
 
 - **Path B** if your Apple account holds a lot of sensitive data, such as mail, notes, and documents, or if you don't want any key on the computer, even for a day.
 - **Path A** if your library is big, if you use Windows or Linux, or if you want the photos to go straight to an external drive.
 
 If both fit, Claude Code says so and lets you choose.
+
+## Google Photos
+
+For a Google Photos library, there is one more way, Path G. [google-photos.md](google-photos.md) has the steps, what comes along, and the risks. In short:
+
+- **Path G, Google Photos in your browser.** You paste the kit's script into the console of your own signed-in photos.google.com tab, in Chrome, Edge, Brave, Arc, Vivaldi, or Opera. It lists your library, compares its size with the free space, and downloads every item. Then the kit checks every file against that list, N of N. Nobody asks for your Google password, and nothing that opens your Google Account stays on the computer. It needs about 2.2 times your library on the disk.
+- **What Path G costs.** Google's terms of service forbid reverse engineering and some kinds of automated access, and Path G repeats Google's internal requests. Google can suspend or close a whole Google Account, with Gmail, Google Drive, and YouTube. No case of this was found for read-only tools that run in your own tab, but nobody can rule it out. When Google changes its requests, the script stops until it is updated. Items in Storage saver have no original, and Locked Folder and Trash are not included.
+- **Google Takeout, Google's own export.** It carries no risk to your account. Google prepares zip archives, which can take hours or days, you download them within 7 days, and immich-go imports them into Immich. There is no N of N check.
+
+Claude Code recommends Path G, and Takeout if you want no risk to your Google Account.
 
 ## After the move
 

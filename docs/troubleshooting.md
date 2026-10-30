@@ -16,7 +16,7 @@ Apple gives no time for this download. Users report that it can sit at "Download
 
 ### osxphotos is not installed, or check names another version
 
-The script prints the install command. It installs uv, then osxphotos 0.77.2, the version the script was checked with:
+The script prints the install command. It installs uv, then osxphotos 0.77.2, the version that the script expects:
 
 ```
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -190,7 +190,15 @@ Immich's machine learning part needs an Intel or AMD processor with the x86-64-v
 
 ### The import has no API key, or Immich does not accept the key
 
-In Immich, open **Account Settings** > **API Keys** > **New API Key**. Tick **Select all**, click **Create**, and copy the key. Immich shows it only once. Then run this in your own Terminal or PowerShell window, and paste the key when it asks. It stays hidden.
+The setup saves the key for you. To make a new one, run this in your own Terminal or PowerShell window:
+
+```
+python3 scripts/immich/bootstrap.py
+```
+
+It keeps a saved key that still works. Otherwise it asks for your Immich email and password, in a window on a Mac or in the terminal on Windows, and saves a new key named "Homecloud" in `.homecloud/immich-api-key` in your home folder. Nothing shows the key. It ends with "Result: OK".
+
+You can also make a key yourself. In Immich, open **Account Settings** > **API Keys** > **New API Key**. Tick **Select all**, click **Create**, and copy the key. Immich shows it only once. Then run this in your own Terminal or PowerShell window, and paste the key when it asks. It stays hidden.
 
 ```
 python3 scripts/immich/import_library.py save-key
@@ -198,7 +206,7 @@ python3 scripts/immich/import_library.py save-key
 
 ### The import says there is no manifest
 
-`import_library.py` needs the list of files that Path A or the Mac export writes, `DIR/.homecloud/manifest.jsonl`. Run the download or the export first. The message names `scripts/icloud.py`, but with the Photos app on a Mac, run `scripts/mac/export_photos.py export` instead. For a copy from iCloud for Windows or from Apple's data copy, make the list with `python3 scripts/immich/make_manifest.py --dir DIR`, then run the import again.
+`import_library.py` needs the list of files, `DIR/.homecloud/manifest.jsonl`. The kit's scripts write it: `scripts/icloud.py download` for Path A, `scripts/mac/export_photos.py export` for the Photos app on a Mac, and `scripts/google/google_photos.py verify` for Google Photos. The message names only the iCloud and iPhone scripts, so run the one for your way. For a copy from iCloud for Windows or from Apple's data copy, make the list with `python3 scripts/immich/make_manifest.py --dir DIR`. Then run the import again.
 
 ### The import says there is not enough free space
 
@@ -235,25 +243,35 @@ Immich links each Live Photo's video to its photo while it reads the files' deta
 
 The path in `docker-compose.yml` must name your folder the way Docker on Windows expects, with forward slashes and quotes, such as `- "C:/Users/you/Homecloud:/mnt/media/homecloud:ro"`. Immich's [libraries docs](https://docs.immich.app/features/libraries) show this form. After you change the file, run `docker compose up -d` in the Immich folder. In Immich, the import path is the folder as Immich sees it inside Docker, here `/mnt/media/homecloud`.
 
-## Tailscale and the iPhone app
+## Tailscale and the phone app
 
 ### The Immich app cannot reach the computer away from home
 
-1. On the iPhone, open the Tailscale app and check that it is connected. iOS runs one VPN at a time, so another VPN app can keep Tailscale off.
+1. On the phone, open the Tailscale app and check that it is connected. An iPhone or an Android phone runs one VPN at a time, so another VPN app can keep Tailscale off.
 2. Check that the computer is on, awake, and signed in to Tailscale with the same account, or shared with yours.
 3. In the Immich app, check the server address. It must be the computer's Tailscale address, such as `http://100.101.102.103:2283`. A home address such as `192.168.1.20` works only on your home Wi-Fi.
-4. Open the same address in Safari on the iPhone. If Immich loads there, the problem is the address in the app.
+4. Open the same address in the phone's browser, such as Safari on an iPhone or Chrome on Android. If Immich loads there, the problem is the address in the app.
 
 ### Uploads do not run in the background
 
-iOS decides when apps run in the background. The iPhone app has no setting to upload only while charging. Only the Android app has one. To make background uploads happen more often:
+Your phone decides when apps run in the background. The Immich app uploads new photos when you open it, and in the background when the phone lets it ([Immich](https://github.com/immich-app/immich/blob/v3.3.5/docs/docs/features/mobile-backup.md)).
+
+On an iPhone, to make background uploads happen more often:
 
 - Open **Settings** > **General** > **Background App Refresh**. Turn it on at the top, and for Immich.
 - Turn off **Low Power Mode** when you do not need it.
 - Turn off **Low Data Mode** for your home Wi-Fi. It is in **Settings** > **Wi-Fi**, under the info button next to the network.
 - Do not swipe the Immich app away in the app switcher. A closed app does not upload in the background.
 
-For a sure upload, open the Immich app on its Backup page and keep it open until it shows nothing left to upload. When you open the app, it stops the background uploads and uploads on screen instead. That upload stops when you leave the app.
+The iPhone app has no setting to upload only while charging.
+
+On an Android phone:
+
+- Open Immich's Backup screen. If a link about notifications or battery shows at the bottom, tap it and allow what it asks. When both are allowed, the links go away.
+- Open the Android **Settings** > **Apps** > **Immich** > **Battery**, and choose **Unrestricted**. The menu names differ by phone maker. The battery link in Immich has a **Show me how** button that opens [dontkillmyapp.com](https://dontkillmyapp.com), a guide for each maker.
+- Immich's backup settings can hold background uploads until the phone is charging. If that is on, uploads wait for the charger.
+
+For a sure upload, open the Immich app on its Backup page and keep it open until it shows nothing left to upload. On an iPhone, that upload on screen stops when you leave the app.
 
 ## Offline vault
 
@@ -341,3 +359,103 @@ When verify reports N of N, it signs you out. In your own Terminal window it ask
 ```
 python3 scripts/icloud.py logout
 ```
+
+## Google Photos
+
+These fixes are for Path G, `scripts/google/google_photos.py` and its browser script, and for Google Takeout. [google-photos.md](google-photos.md) describes both.
+
+### `prepare` finds no browser
+
+The browser script needs Chrome, Edge, Brave, Arc, Vivaldi, or Opera, because only these browsers let a web page save files into a folder you pick. Safari and Firefox cannot. Install Google Chrome from <https://www.google.com/chrome/>, sign in to Google Photos there, and run `prepare` again. If you use Google Photos in another of these browsers, add `--browser` with its name, such as `--browser edge`.
+
+### `prepare` refuses the folder
+
+Browsers do not let a web page save into your home folder, Desktop, Documents, or Downloads themselves, or into system folders, so `prepare` refuses them too. Pick a new folder directly in your home folder, outside the folders that sync to a cloud service, and run `prepare` again with it.
+
+If `prepare` says that the folder holds another script's copy, the folder already has a list from an iCloud copy. Use a new, empty folder for Google Photos, so the two copies stay apart.
+
+### The script is not on the clipboard
+
+`prepare` prints where it saved the script: `DIR/.homecloud/homecloud_google.js`. Open that file in a text editor, select everything, and copy it.
+
+### The console does not open
+
+Press Cmd+Option+J on a Mac or Ctrl+Shift+J on Windows while the Google Photos tab is in front. If nothing opens, press Cmd+Option+I on a Mac or F12 on Windows, and click **Console** in the panel that opens.
+
+### The console does not let you paste
+
+The first time, the browser blocks the paste and shows a warning that asks you to type `allow pasting`. If your browser uses another language, the words are in that language. Type exactly what it shows, press Enter, then paste again and press Enter. The warning is there because scammers tell people to paste code into the console. Paste only the script that `prepare` made.
+
+### No Homecloud panel appears
+
+The panel appears at the bottom right of the page. Check that the console belongs to the photos.google.com tab, that you pasted the whole script, and that you pressed Enter. If the console shows a red error, tell Claude Code what it says.
+
+### The panel says "This page is not ready" or that you are not signed in
+
+Sign in to Google Photos in that tab, reload the page, paste the script again, and click **Start**. It continues where it stopped.
+
+### The panel says you picked another folder
+
+The panel accepts only the folder that `prepare` made, by its name. Click **Start** again and pick the folder with the name that the panel shows.
+
+### The folder window says "Can't open this folder"
+
+The browser does not let a web page use that folder, because it holds system files. Click **Choose a different folder** and pick `DIR`, the folder that `prepare` printed.
+
+### The panel says "This browser cannot save files into a folder"
+
+Safari and Firefox cannot do it. Use Chrome, Edge, Brave, Arc, Vivaldi, or Opera. In Brave, the folder window is switched off until you turn it on. Open `brave://flags/#file-system-access-api` in Brave, set it to **Enabled**, and click **Relaunch**. Then open Google Photos again and repeat the steps.
+
+### The panel says "Not enough free space"
+
+Nothing was downloaded. `prepare` measured the free space and left a safety margin of at least 5 GB, or 2% of the disk when that is more. Free up space, or pick a folder on a bigger drive, such as an external drive. Then run `prepare` again with that folder, and repeat the steps.
+
+### The panel says that many downloads failed in a row
+
+Check the internet connection. Then reload the page, paste the script again, and click **Start**. It continues where it stopped. If the panel says that the disk is full, free some space and click **Start**.
+
+### `status` reports no update for 10 minutes or more
+
+The tab may have closed, or the computer may have slept. Run `prepare` again with the same `DIR` and repeat the steps. The script skips every item that is already there with the right size. Keep the tab open, ideally in front, and the computer awake and plugged in.
+
+### The panel says that the listing or the downloads failed
+
+The panel says that Google Photos did not answer the way the script expects, or that downloads do not work from this page. Nothing was changed in Google Photos. Tell Claude Code what the panel says. If Google changed its internal requests, the script cannot work until it is updated. Google Takeout still works:
+
+```
+python3 scripts/google/google_photos.py takeout --to DIR
+```
+
+Do not paste any other code into the console, whoever sends it.
+
+### `verify` says "Result: NOT COMPLETE"
+
+Some items are missing, failed, or have the wrong size. `verify` names a few of them and writes the full list to `DIR/.homecloud/google-problems.txt`. If the Google Photos tab with the panel is still open, click **Start** there. Otherwise run `prepare` again with the same `DIR` and repeat the steps. The script downloads only what is missing. Then run `verify` again.
+
+If `verify` reports files that end in `.crswap`, those are pieces of downloads that did not finish. They hold nothing you need, and the import skips them.
+
+### `verify` says some albums have fewer items than Google counts
+
+Photos that other people added to a shared album stay theirs, so they are not in your library. To keep some of them, select them in the shared album in Google Photos and download them. Then upload them in Immich's web page with its **Upload** button.
+
+### The import's plan talks about items hidden in iCloud
+
+The import uses the same words for every library. For Google Photos, it means the items that you archived in Google Photos. They go to the Archive in Immich.
+
+### Takeout: the import finds no archives, or says parts are missing
+
+`takeout --import` reads the `.zip` parts, named `takeout-...zip`, directly in `DIR`. Move every part from your Downloads folder into `DIR`, and do not unpack them. If a part is missing or cut off, download it again from Google's email. Google lets you download each part 5 times, within 7 days. immich-go reads `.zip` parts only, so if you chose `.tgz`, create the export again with `.zip`.
+
+### Takeout: Google asks for your password when you download a part
+
+That is Google's own check. Type the password there, in the browser, never in a chat.
+
+### Takeout: immich-go stopped
+
+Run the same command again. immich-go skips what Immich already has:
+
+```
+python3 scripts/google/google_photos.py takeout --to DIR --import
+```
+
+If it says that there is not enough free space where Immich keeps its files, free up space first.

@@ -114,6 +114,12 @@ def main(argv=None):
     if not root.is_dir():
         say(f"No folder at {root}.")
         return EXIT_USAGE
+    parts = [part.lower() for part in root.parts]
+    if any(part in ("icloud photos", "icloudphotos", "iclouddrive", "mobile documents") or part.endswith(".photoslibrary")
+           for part in parts):
+        say(f"{root} is inside an iCloud folder or a Photos library. Homecloud never writes there, because a "
+            "change there can reach iCloud. Copy the photos into another folder first, then run this on that folder.")
+        return EXIT_USAGE
     manifest = root / ".homecloud" / "manifest.jsonl"
     if manifest.is_file():
         others = existing_sources(manifest) - {SOURCE}

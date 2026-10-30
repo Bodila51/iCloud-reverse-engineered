@@ -65,9 +65,14 @@ size_of() {  # "1.2 GB in 345 files"
 
 refuse_path() {  # refuse_path PATH WHAT: paths this script never deletes
   local p=$1 what=$2
+  while [ "${#p}" -gt 1 ] && [ "${p%/}" != "$p" ]; do p=${p%/}; done
   case "$p" in
     /|/Users|/Volumes|/Applications|/System|/Library|"$HOME") die "Refusing to delete $p as $what." 2 ;;
     *.photoslibrary|*.photoslibrary/*) die "Refusing to delete $p: it is a Photos library." 2 ;;
+  esac
+  case "$p" in
+    /Volumes/*/*|/Users/*/*) ;;
+    /Volumes/*|/Users/*) die "Refusing to delete $p as $what: it is a whole drive or a whole home folder." 2 ;;
   esac
   if under "$p" "$HOME/Library" || under "$p" "$HOME/Pictures/Photos Library.photoslibrary"; then
     die "Refusing to delete $p as $what: it is inside ~/Library or the Photos library." 2

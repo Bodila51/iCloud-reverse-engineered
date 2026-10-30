@@ -72,8 +72,9 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 DEFAULT_URL = "http://localhost:2283"
 DEFAULT_KEY_FILE = Path.home() / ".homecloud" / "immich-api-key"
 DEFAULT_APP_DIR = Path.home() / "immich-app"
-# Immich CLI docs, "Installation (Docker)".
-DEFAULT_CLI_IMAGE = "ghcr.io/immich-app/immich-cli:latest"
+# Immich CLI docs, "Installation (Docker)". Pinned to the release the kit was checked against
+# (CLI tags have no "v"); it works with every Immich 3 server.
+DEFAULT_CLI_IMAGE = "ghcr.io/immich-app/immich-cli:3.3.5"
 # docker-compose.yml from the Immich release sets "name: immich", so Compose creates the
 # network immich_default, and the server is reachable there as immich-server:2283.
 DEFAULT_NETWORK = "immich_default"
@@ -393,6 +394,8 @@ SOURCE_STEPS = {
     "usb": ("python3 scripts/vault/vault.py copy --to DIR", "python3 scripts/vault/vault.py verify --to DIR"),
     "folder": ("copy the missing files into DIR, then python3 scripts/immich/make_manifest.py --dir DIR",
                "python3 scripts/immich/make_manifest.py --dir DIR"),
+    "google-web": ("python3 scripts/google/google_photos.py prepare --to DIR, then paste the script in your "
+                   "Google Photos tab again", "python3 scripts/google/google_photos.py verify --to DIR"),
 }
 
 
@@ -436,7 +439,8 @@ def load_manifest(folder: Path) -> List[Entry]:
     manifest = folder / ".homecloud" / "manifest.jsonl"
     if not manifest.is_file():
         raise Stop(f"No manifest at {manifest}. Make the copy first: scripts/icloud.py download, "
-                   "scripts/mac/export_photos.py export or scripts/vault/vault.py copy.", 2)
+                   "scripts/mac/export_photos.py export, scripts/vault/vault.py copy, scripts/google/google_photos.py verify "
+                   "or scripts/immich/make_manifest.py.", 2)
     entries: List[Entry] = []
     seen: Set[str] = set()
     duplicates = 0
@@ -900,7 +904,7 @@ def apply_plan(args) -> List[str]:
     plan = ["Mark as favorites the photos and videos that are favorites in the manifest.",
             "Create the manifest's albums that do not exist yet, and add their photos and videos."]
     if args.hidden == "archive":
-        plan.append("Archive the items that were hidden in iCloud: they leave the main timeline but stay "
+        plan.append("Archive the items that were hidden in iCloud or archived in Google Photos: they leave the main timeline but stay "
                     "in Archive and in search.")
     plan.append("Nothing is removed or unfavorited. Live Photo video parts are left alone; Immich keeps "
                 "them with their photo.")
@@ -1159,7 +1163,7 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--dir", "--to", dest="dir", required=True,
                            help="the folder with the copy (DIR); --to works too")
             p.add_argument("--hidden", choices=HIDDEN_CHOICES, default="archive",
-                           help="items hidden in iCloud: archive them in Immich (default) or keep them in the timeline")
+                           help="items hidden in iCloud or archived in Google Photos: archive them in Immich (default) or keep them in the timeline")
             p.add_argument("--hash-workers", type=int, default=4, help="files read in parallel (default 4)")
 
     def upload_options(p: argparse.ArgumentParser) -> None:

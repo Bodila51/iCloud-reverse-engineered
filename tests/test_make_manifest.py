@@ -67,3 +67,15 @@ def test_leaves_another_scripts_manifest_alone(tmp_path):
 def test_empty_folder_fails(tmp_path):
     touch(tmp_path / "notes.txt")
     assert mm.main(["--dir", str(tmp_path)]) == 1
+
+
+def test_refuses_icloud_folders_and_photos_libraries(tmp_path):
+    icloud = tmp_path / "Pictures" / "iCloud Photos" / "Photos"
+    touch(icloud / "IMG_0001.HEIC")
+    assert mm.main(["--dir", str(icloud)]) == 2
+    assert not (icloud / ".homecloud").exists()
+
+    library = tmp_path / "Photos Library.photoslibrary" / "originals"
+    touch(library / "IMG_0002.HEIC")
+    assert mm.main(["--dir", str(library)]) == 2
+    assert not (library / ".homecloud").exists()

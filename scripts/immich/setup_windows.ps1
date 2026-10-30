@@ -52,8 +52,9 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest in Windows PowerShell 5.1 is slow with the progress bar
 
-# [I1] "Download docker-compose.yml and example.env" from the latest release.
-$ReleaseUrl = 'https://github.com/immich-app/immich/releases/latest/download'
+# [I1] "Download docker-compose.yml and example.env" from the release. Pinned to v3.3.5, the release
+# the kit was checked against; IMMICH_VERSION=v3 in .env keeps Immich updating within version 3.
+$ReleaseUrl = 'https://github.com/immich-app/immich/releases/download/v3.3.5'
 # [I2] "RAM: Minimum 6GB". Docker reports a 6 GB VM as a bit less than 6,000,000,000 bytes.
 $MinDockerMem = 5500000000
 $MlMark = '#ML-OFF# '
@@ -310,7 +311,7 @@ function Show-MlOff {
     Say '  You lose: search by what is in a photo (for example "dog" or "beach"), People (faces),'
     Say '  search for text in photos, and duplicate detection. The Explore page shows little (Immich FAQ).'
     Say '  You keep: the timeline, albums, favorites, the map, search by date, place, camera or file name,'
-    Say '  sharing, and backup from the Immich iPhone app.'
+    Say '  sharing, and backup from the Immich phone app.'
 }
 
 # ---------------------------------------------------------------- plan
@@ -554,7 +555,7 @@ if ($ts) { $tsExe = $ts.Source } elseif ($env:ProgramFiles -and (Test-Path -Lite
 if ($tsExe) {
     $r = Invoke-Native $tsExe @('ip', '-4')   # Tailscale CLI: tailscale ip -4
     $tsIp = ($r.Output -split "`n" | Select-Object -First 1).Trim()
-    if ($r.Code -eq 0 -and $tsIp) { Say "  Through Tailscale: http://${tsIp}:2283 (for the Immich iPhone app, see scripts\tailscale.md)" }
+    if ($r.Code -eq 0 -and $tsIp) { Say "  Through Tailscale: http://${tsIp}:2283 (for the Immich phone app, see scripts\tailscale.md)" }
     else { Say '  Through Tailscale: Tailscale is installed but not connected. See scripts\tailscale.md.' }
 } else {
     Say '  Through Tailscale: set it up with scripts\tailscale.md.'
@@ -565,24 +566,17 @@ Say '  If Windows asks whether Docker Desktop may use the network, allow it on p
 # ---------------------------------------------------------------- next steps
 
 Say ''
-Say 'Next steps:'
-Say '  1. Open http://localhost:2283, click Getting Started and create your admin account (Immich post-install).'
+Say 'Next steps (scripts\setup.ps1 does step 1 for you):'
+$mlFlag = ''
+if ((Get-MlState) -ne 'on') { $mlFlag = ' --ml off' }
+Say '  1. Create your Immich account and the API key for the import:'
+Say "       py scripts\immich\bootstrap.py --url http://localhost:2283$mlFlag"
+Say '     It asks for the email and password. The key is saved for the import and never shown.'
 $step = 2
-if ((Get-MlState) -ne 'on') {
-    Say "  $step. In Immich, open Administration > Settings > Machine Learning Settings and turn machine learning off."
-    Say '     Its container is not running, so its jobs would fail for every photo (Immich FAQ).'
-    $step++
-}
 if (-not $autostart) {
     Say "  $step. In Docker Desktop > Settings > General, turn on ""Start Docker Desktop when you sign in to your computer""."
     $step++
 }
-Say "  $step. In Immich, click your initials (top right) > Account Settings > API Keys > New API Key."
-Say '     Tick Select all, click Create and copy the key. Immich shows it only once.'
-$step++
-Say "  $step. In your own PowerShell window, run this and paste the key when it asks (it stays hidden):"
-Say '       py scripts\immich\import_library.py save-key'
-$step++
 Say "  $step. Check the import plan: py scripts\immich\import_library.py check --dir DIR"
 Say ''
 Say 'Updating Immich later: Immich''s upgrade guide says "docker compose pull && docker compose up -d".'

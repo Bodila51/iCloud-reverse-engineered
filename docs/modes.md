@@ -1,31 +1,30 @@
 # Choose how your photos live at home
 
-Homecloud copies your iCloud Photos library to your computer once, with Path A or Path B, as [two-paths.md](two-paths.md) explains. After that, new photos still need a way to get home. The four modes are four ways to do that, and each one gives up something different. Claude Code picks a mode from three questions, and you can switch later.
+Homecloud copies your library to your computer once: iCloud Photos with Path A or Path B, as [two-paths.md](two-paths.md) explains, or Google Photos with Path G, as [google-photos.md](google-photos.md) explains. After that, new photos still need a way to get home. The four modes are four ways to do that, and each one gives up something different. Claude Code picks a mode from one question, and you can switch later.
 
 Run the commands on this page from the kit folder. On Windows, type `py` instead of `python3`. The Path A script and the Offline vault script also need the kit's virtual environment active, as [README.md](../README.md#do-it-by-hand) shows.
 
-## How the three questions pick a mode
+## How Claude Code picks a mode
 
-Claude Code asks these in order and stops at the first yes:
+Claude Code asks you one question: will this computer be at home and switched on most of the day? Yes means **Always on**. No means **Home archive**. Both work with an iPhone or an Android phone, and both cost nothing for storage.
 
-1. Will this computer be at home and switched on most of the day? Yes means **Always on**.
-2. Would you pay $0.99 a month to keep recent photos syncing like today? Yes means **Hybrid**.
-3. Do you want a phone app that uploads new photos by itself? Yes means **Home archive**. No means **Offline vault**.
+You can ask for one of the other two modes instead:
 
-The order matters. A computer that stays on gives you the most without a storage fee, so it comes first. If you have none, a small Apple plan keeps your phone working the way it does today. If you want to pay nothing for storage, the last question decides between an app and a cable.
+- **Hybrid**, if you use iCloud Photos and would pay $0.99 a month to keep recent photos syncing like today.
+- **Offline vault**, if you have an iPhone and want no apps on it, only a monthly copy over a cable.
 
 ## Always on
 
-Your computer runs Immich and Tailscale all the time. iCloud Photos is off, and you are on Apple's free 5 GB plan. The Immich app on your iPhone uploads new photos to the computer, at home or away, whenever iOS lets it run. Your whole library is in the app wherever you are.
+Your computer runs Immich and Tailscale all the time. iCloud Photos, or backup in the Google Photos app, is off, and you are on the free plan: 5 GB at Apple, or 15 GB at Google. The Immich app on your phone uploads new photos to the computer, at home or away, whenever iOS or Android lets it run. Your whole library is in the app wherever you are.
 
 Storage costs $0 a month. The computer uses electricity, and a small PC is a one-time cost if you buy one. A mini PC with an Intel N150 chip idles at about 6 to 12 watts, and an old laptop at about 10 to 15 watts. A plug-in power meter shows what yours uses.
 
 What you give up:
 
 - A computer that stays on and awake. A MacBook sleeps when you close the lid, unless an external display is attached. Keep the lid open and let the screen turn off. If the lid must stay closed, read [A MacBook with the lid closed](#a-macbook-with-the-lid-closed).
-- iOS decides when the Immich app uploads in the background. The iPhone app has no setting to upload only while charging. When you open the app, it stops the background uploads and uploads on screen instead. That upload stops when you leave the app.
+- Your phone decides when the Immich app uploads in the background. On an iPhone, the app has no setting to upload only while charging. When you open the app, it stops the background uploads and uploads on screen instead. That upload stops when you leave the app. On Android, set Immich's battery use to **Unrestricted**, as the phone page shows, so that Android lets it upload in the background.
 - After a power cut or a restart for an update, Immich stays down until someone signs in to the computer, because Docker Desktop starts at sign-in. A Mac with FileVault on cannot sign in by itself.
-- Away from home, the app reaches the computer only while Tailscale is connected on the iPhone.
+- Away from home, the app reaches the computer only while Tailscale is connected on the phone.
 
 What you do each day:
 
@@ -35,7 +34,7 @@ What you do each month:
 
 - Copy Immich's library folder to your second drive. This folder also holds the database backups that Immich makes each day.
 
-After each major iOS update, open a new Live Photo in Immich and check that it plays.
+On an iPhone, after each major iOS update, open a new Live Photo in Immich and check that it plays.
 
 What Claude Code sets up:
 
@@ -65,18 +64,18 @@ While it is on, `pmset -g` shows `SleepDisabled 1`.
 
 ## Home archive
 
-Your computer runs Immich only when it is on. iCloud Photos is off, and you are on the free 5 GB plan. New photos stay on your iPhone until the computer is on. Then you open the Immich app, and it uploads them, at home or away through Tailscale. iOS does not know when the computer is on, so a background upload reaches it only by chance.
+Your computer runs Immich only when it is on. iCloud Photos, or backup in the Google Photos app, is off, and you are on the free plan. New photos stay on your phone until the computer is on. Then you open the Immich app, and it uploads them, at home or away through Tailscale. Your phone does not know when the computer is on, so a background upload reaches it only by chance.
 
-To keep space free on the phone, you keep about the last year of photos on it and remove older ones with **Free Up Space** in the Immich app. You pick a cutoff date. Free Up Space leaves out your favorites by default and never offers photos in shared albums. You can also keep chosen albums. It offers a photo only when Immich holds a copy with exactly the same bytes. The files that Homecloud imported from your Mac or PC can differ from the files on your iPhone byte for byte, and then Free Up Space does not offer those photos. Photos that the Immich app uploaded itself always match. Let the Immich app finish its own upload first, and read the preview before you confirm. Removed photos go to **Recently Deleted** on the iPhone for 30 days. The space comes back when you empty Recently Deleted.
+To keep space free on the phone, you keep about the last year of photos on it and remove older ones with **Free Up Space** in the Immich app. You pick a cutoff date. Free Up Space leaves out your favorites by default and never offers photos in shared albums. You can also keep chosen albums. It offers a photo only when Immich holds a copy with exactly the same bytes. The files that Homecloud imported from your computer, from iCloud, or from Google Photos can differ from the files on your phone byte for byte, and then Free Up Space does not offer those photos. Photos that the Immich app uploaded itself always match. Let the Immich app finish its own upload first, and read the preview before you confirm. On an iPhone, removed photos go to **Recently Deleted** for 30 days, and the space comes back when you empty Recently Deleted. On Android, they go to the phone's trash, and the space comes back when you empty the trash in your gallery app.
 
-Use Free Up Space only after iCloud Photos is off on your iPhone. While iCloud Photos is on, removing a photo from the iPhone also removes it from iCloud and from your other devices.
+Use Free Up Space only after iCloud Photos is off on your iPhone. While iCloud Photos is on, removing a photo from the iPhone also removes it from iCloud and from your other devices. If you come from Google Photos, turn off backup in the Google Photos app first, as [google-photos.md](google-photos.md#after-the-move) shows.
 
 Storage costs $0 a month.
 
 What you give up:
 
 - Older photos open only while the computer is on.
-- New photos exist only on your iPhone until the computer is on again. If you lose the phone before that, you lose those photos.
+- New photos exist only on your phone until the computer is on again. If you lose the phone before that, you lose those photos.
 
 What you do each time you turn the computer on:
 
@@ -89,9 +88,7 @@ What you do each month:
 
 ## Hybrid
 
-This mode is still being tested. The steps below are the current plan, and they can change.
-
-You keep Apple's 50 GB plan, and iCloud Photos stays on. Recent photos sync between your devices the way they do today. Once a month, Apple's own app brings the new photos down to your computer, and Homecloud copies and checks them. Then you delete photos older than a cutoff date from iCloud yourself, which keeps you under 50 GB. No script does that step for you, and Homecloud never deletes anything in iCloud.
+Hybrid is for iCloud Photos. You keep Apple's 50 GB plan, and iCloud Photos stays on. Recent photos sync between your devices the way they do today. Once a month, Apple's own app brings the new photos down to your computer, and Homecloud copies and checks them. Then you delete photos older than a cutoff date from iCloud yourself, which keeps you under 50 GB. No script does that step for you, and Homecloud never deletes anything in iCloud.
 
 Storage costs $0.99 a month in the US. The price of the 50 GB plan differs by country.
 
@@ -134,7 +131,7 @@ No apps on your phone and no Tailscale. iCloud Photos is off, and you are on the
 
 The script runs on the computer. It needs Python and pymobiledevice3, a free tool under the GPL-3.0 license, which the kit installs from PyPI into a virtual environment.
 
-The cable copy sees only the originals stored on the iPhone. With **Optimize iPhone Storage** on, many originals live only in iCloud. That is why the first full copy of your library comes through Path A or Path B, and why the iPhone must hold its own originals, with iCloud Photos off.
+The cable copy sees only the originals stored on the iPhone. With **Optimize iPhone Storage** on, many originals live only in iCloud. That is why the first full copy of your library comes through Path A, Path B, or Path G, and why the iPhone must hold its own originals, with iCloud Photos off.
 
 Immich is optional in this mode. If you install it, you can browse the vault on the computer.
 
@@ -168,11 +165,11 @@ If you also back up the whole iPhone to the computer, it asks for its passcode e
 
 ## What every mode has in common
 
-You own the backups now. Apple no longer keeps a copy for you, so keep a second copy on another drive. If the only drive with your photos dies, the photos are gone. A drive kept somewhere else, such as at work or with family, also covers fire and theft.
+You own the backups now. Once your photos are gone from the cloud, nobody else keeps a copy for you, so keep a second copy on another drive. If the only drive with your photos dies, the photos are gone. A drive kept somewhere else, such as at work or with family, also covers fire and theft.
 
 Copy two things:
 
-- The download folder, once, after the first check passes. Check the copy too. On a Mac, run `python3 scripts/mac/export_photos.py verify --to COPY`, where `COPY` is the folder on the second drive. On Windows, compare the number of files and their sizes. Immich on Windows reads its photos from this folder, so copy it again after each monthly step that adds files to it.
+- The download folder, with its hidden `.homecloud` folder, once, after the first check passes. Check the copy too, with the check of your way, where `COPY` is the folder on the second drive: `python3 scripts/icloud.py verify --to COPY` for Path A, `python3 scripts/mac/export_photos.py verify --to COPY` for the Photos app on a Mac, or `python3 scripts/google/google_photos.py verify --to COPY` for Path G. For iCloud for Windows and Apple's data copy, compare the number of files and their sizes. Copy the folder again after each monthly step that adds files to it.
 - Immich's library folder, every month. Each day at 2:00 AM, if the computer is on, Immich writes a backup of its database into this folder and keeps the last 14. The photos and the database backups belong together.
 
 ## Share it with your family
@@ -180,10 +177,10 @@ Copy two things:
 Immich gives each person their own account and library, so one computer can serve the whole family. This works in Always on and Home archive.
 
 1. In Immich, open **Administration** > **Users** and create an account for each person.
-2. Each person makes their own free Tailscale account and installs Tailscale on their iPhone.
+2. Each person makes their own free Tailscale account and installs Tailscale on their phone.
 3. In the Tailscale admin console, share the Immich computer with each person, and send them the link. They open it and accept.
 4. Each person installs the Immich app and signs in with the computer's Tailscale address, such as `http://100.101.102.103:2283`, and their own Immich account.
-5. Each person turns on **Background App Refresh** for Immich and picks the albums to back up.
+5. Each person picks the albums to back up and lets Immich run in the background: on an iPhone with **Background App Refresh** on for Immich, and on Android with Immich's battery use set to **Unrestricted**. The phone page that `python3 scripts/phone_card.py` makes has the steps for both.
 
 Share the computer instead of inviting family members to your Tailscale account. A shared computer does not use one of your 6 user places on the free plan, and the person reaches only that computer, not your other devices. To see each other's photos, turn on partner sharing in Immich.
 

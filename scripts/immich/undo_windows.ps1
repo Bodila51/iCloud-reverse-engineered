@@ -56,6 +56,10 @@ function Assert-Deletable([string]$Path, [string]$What) {
         Stop-Script "Refusing to delete $Path as ${What}: it is inside a Windows or app data folder." 2
     }
     if ($env:OneDrive -and (Test-Under $env:OneDrive $Path)) { Stop-Script "Refusing to delete $Path as ${What}: it contains your OneDrive folder." 2 }
+    $pictures = [Environment]::GetFolderPath('MyPictures')
+    if (($pictures -and (Test-Under $Path (Join-Path $pictures 'iCloud Photos'))) -or ($Path -match '(?i)[\\/]iCloud ?Photos([\\/]|$)') -or ($Path -match '(?i)[\\/]iCloudDrive([\\/]|$)')) {
+        Stop-Script "Refusing to delete $Path as ${What}: it is inside the iCloud Photos folder, and a delete there removes photos from iCloud." 2
+    }
 }
 
 function Invoke-Native {

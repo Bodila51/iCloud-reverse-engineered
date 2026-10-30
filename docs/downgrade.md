@@ -4,6 +4,8 @@ Do these steps last, in this order. Homecloud never does them for you. If a chec
 
 In Hybrid mode you keep iCloud Photos on. Follow [Hybrid mode](#hybrid-mode) at the end instead.
 
+If your photos came from Google Photos, follow [After the move](google-photos.md#after-the-move) in google-photos.md instead of this page.
+
 Apple renames menus between iOS versions. The steps below name the current ones and say where older versions differ. If your screen differs, Apple's own pages have the current steps: [How to turn off iCloud Photos](https://support.apple.com/102179) and [Downgrade or cancel your iCloud+ plan](https://support.apple.com/108318).
 
 ## 1. Check the copy
