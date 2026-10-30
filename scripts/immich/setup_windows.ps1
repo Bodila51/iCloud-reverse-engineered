@@ -245,7 +245,7 @@ function Disable-MlService([string[]]$Lines) {
         if ($line -match '^  immich-machine-learning:\s*$') {
             $inMl = $true
             $out.Add("$MlNote Homecloud turned machine learning off (Immich FAQ: How can I disable machine learning?).")
-            $out.Add("$MlNote To turn it back on: powershell -ExecutionPolicy Bypass -File scripts\immich\setup_windows.ps1 -Ml on")
+            $out.Add("$MlNote To turn it back on: powershell -ExecutionPolicy Bypass -File scripts/immich/setup_windows.ps1 -Ml on")
             $out.Add($MlMark + $line)
             continue
         }
@@ -570,14 +570,14 @@ Say 'Next steps (scripts\setup.ps1 does step 1 for you):'
 $mlFlag = ''
 if ((Get-MlState) -ne 'on') { $mlFlag = ' --ml off' }
 Say '  1. Create your Immich account and the API key for the import:'
-Say "       py scripts\immich\bootstrap.py --url http://localhost:2283$mlFlag"
+Say "       py scripts/immich/bootstrap.py --url http://localhost:2283$mlFlag"
 Say '     It asks for the email and password. The key is saved for the import and never shown.'
 $step = 2
 if (-not $autostart) {
     Say "  $step. In Docker Desktop > Settings > General, turn on ""Start Docker Desktop when you sign in to your computer""."
     $step++
 }
-Say "  $step. Check the import plan: py scripts\immich\import_library.py check --dir DIR"
+Say "  $step. Check the import plan: py scripts/immich/import_library.py check --dir DIR"
 Say ''
 Say 'Updating Immich later: Immich''s upgrade guide says "docker compose pull && docker compose up -d".'
 Say 'Keep the pgdata line in .env and the pgdata volume in docker-compose.yml when you replace the files.'

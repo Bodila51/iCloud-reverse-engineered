@@ -251,6 +251,7 @@ The path in `docker-compose.yml` must name your folder the way Docker on Windows
 2. Check that the computer is on, awake, and signed in to Tailscale with the same account, or shared with yours.
 3. In the Immich app, check the server address. It must be the computer's Tailscale address, such as `http://100.101.102.103:2283`. A home address such as `192.168.1.20` works only on your home Wi-Fi.
 4. Open the same address in the phone's browser, such as Safari on an iPhone or Chrome on Android. If Immich loads there, the problem is the address in the app.
+5. On Windows, if Immich does not load in the phone's browser either, open **Windows Security** > **Firewall & network protection** > **Allow an app through firewall**, click **Change settings**, and tick **Private** for **Docker Desktop Backend**.
 
 ### Uploads do not run in the background
 

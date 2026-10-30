@@ -23,7 +23,7 @@ bash scripts/setup.sh --yes
 On Windows:
 
 ```
-powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -Yes
+powershell -ExecutionPolicy Bypass -File scripts/setup.ps1 -Yes
 ```
 
 Without `--yes` (`-Yes` on Windows), the setup shows its plan and asks once before it changes anything. Claude Code adds `--yes` after you say yes to its own plan. For Immich, the setup does this:
@@ -52,7 +52,7 @@ bash scripts/immich/setup_mac.sh --yes
 python3 scripts/immich/bootstrap.py --url http://localhost:2283
 ```
 
-On Windows, run `setup_windows.ps1 -Yes`, then `py scripts\immich\bootstrap.py --url http://localhost:2283` in your own PowerShell window. It asks for the email and the password right there in PowerShell, and nothing shows while you type the password.
+On Windows, run `setup_windows.ps1 -Yes`, then `py scripts/immich/bootstrap.py --url http://localhost:2283` in your own PowerShell window. It asks for the email and the password right there in PowerShell, and nothing shows while you type the password.
 
 - If the setup turned machine learning off, add `--ml off` to `bootstrap.py`.
 - If Immich already has an account, `bootstrap.py` asks for that account's email and password. It makes a new key only if the saved key is missing or no longer works.
@@ -116,10 +116,10 @@ These are the same steps without `setup.sh` and `bootstrap.py`. Use them if a sc
 The steps are the same as on a Mac, with these commands:
 
 ```
-powershell -ExecutionPolicy Bypass -File scripts\immich\setup_windows.ps1
-py scripts\immich\import_library.py save-key
-py scripts\immich\import_library.py check --dir DIR
-py scripts\immich\import_library.py all --dir DIR
+powershell -ExecutionPolicy Bypass -File scripts/immich/setup_windows.ps1
+py scripts/immich/import_library.py save-key
+py scripts/immich/import_library.py check --dir DIR
+py scripts/immich/import_library.py all --dir DIR
 ```
 
 Differences on Windows:
@@ -218,7 +218,7 @@ Run this in your own Terminal window. It lists everything it would remove, with 
 bash scripts/immich/undo_mac.sh
 ```
 
-On Windows: `powershell -ExecutionPolicy Bypass -File scripts\immich\undo_windows.ps1`.
+On Windows: `powershell -ExecutionPolicy Bypass -File scripts/immich/undo_windows.ps1`.
 
 It removes Immich's containers, programs and folder, including the photo library inside it. `--dir DIR` (Windows: `-Dir DIR`) also deletes the download folder. Use that only for a test folder, never for your only copy of your photos. It never touches iCloud, Google Photos, your phone or the Photos app. At the end it prints how to uninstall Docker Desktop and Tailscale by hand.
 

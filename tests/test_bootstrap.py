@@ -367,7 +367,7 @@ def test_falls_back_to_system_config_and_to_sign_in_or_create(immich, tmp_path, 
 
 def test_no_window_and_no_terminal_stops_with_a_plain_sentence(immich, tmp_path, monkeypatch, capsys, no_dialog):
     code, out, key_file = run(immich, tmp_path, monkeypatch, capsys, "--email", "jane@example.com")
-    assert code == 2 and "--password-stdin" in out
+    assert code == 2 and "your own Terminal window" in out and "--password-stdin" not in out
     assert immich.users == {} and not key_file.exists()
 
 

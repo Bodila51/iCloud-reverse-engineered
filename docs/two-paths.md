@@ -102,7 +102,7 @@ What it costs:
 | Shared Albums and Recently Deleted | Not included | Not included |
 | Breaks when Apple changes iCloud.com | Yes, until the kit is updated | No |
 | Left on the computer afterwards | A session key, until you log out | Nothing |
-| Disk space on the computer | About 2.2 times your library | B1: about 2.2 times, plus the Photos library. B2: about 1.1 times. B3: about 2.2 times, plus the iCloud Photos folder on drive C:. |
+| Disk space on the computer | About 2.2 times your library | B1: about 2.2 times, plus the Photos library. B2: about 1.1 times. B3: about 2.2 times, plus the iCloud Photos folder on drive C:. B4: about 2.2 times, plus the zip archives while you keep them. |
 
 Paths A and B1 need about 2.2 times your library, because the files land in a download folder first and are then copied into Immich. With B1, the Photos library holds its own copy of the originals on top of that, unless it lives on an external drive. With B2, Immich holds the only copy on the computer. With B3, the iCloud Photos folder on drive C:, the download folder, and Immich each hold a copy.
 

@@ -137,7 +137,7 @@ If **Auto** is not in the mode menu, keep the mode you have. Claude Code then as
 
 - It checks your computer: the system, the memory, the free space, the drives, and what is installed.
 - It picks a folder for your photos with enough room, outside iCloud Drive, OneDrive, and Google Drive.
-- It runs one command that installs Docker Desktop, Immich, and Tailscale: `scripts/setup.sh` on a Mac, or `scripts\setup.ps1` on Windows, which also installs Python if it is missing.
+- It runs one command that installs Docker Desktop, Immich, and Tailscale: `scripts/setup.sh` on a Mac, or `scripts/setup.ps1` on Windows, which also installs Python if it is missing.
 - It creates your Immich account and an API key for the import. The key goes into a file that only your account can read, and nothing shows it.
 - It copies your photos the way you picked, and checks every one: "N of N".
 - It adds them to Immich with your favorites and albums, and checks again.
@@ -255,7 +255,7 @@ Then Claude Code copies the iCloud Photos folder into `DIR` with robocopy, the c
 
 Your iPhone already shows your whole library. The Immich app uploads it to Immich on your computer. When an original is only in iCloud, the app pulls it from iCloud into its own cache and empties the cache after the upload, as [Immich's backup docs](https://docs.immich.app/features/mobile-backup) describe.
 
-1. Set up the computer with `scripts/setup.sh` on a Mac or `scripts\setup.ps1` on Windows. It installs Immich and Tailscale, creates your Immich account, and opens a page for your phone. Claude Code runs it for you.
+1. Set up the computer with `scripts/setup.sh` on a Mac or `scripts/setup.ps1` on Windows. It installs Immich and Tailscale, creates your Immich account, and opens a page for your phone. Claude Code runs it for you.
 2. On the iPhone, follow the first four steps in the iPhone part of that page: install **Tailscale** and **Immich** from the App Store, and sign in to Immich with the server address and email that the page shows.
 3. Tap the cloud icon at the top right to open the **Backup** screen. On the **Backup Albums** card, tap **Select** and pick **Recents**, which holds every photo on the iPhone except hidden ones. Then turn on **Enable Backup**.
 4. Keep the app open on its backup screen, with the iPhone on Wi-Fi and charging. The iPhone screen stays on while that screen is open.
@@ -327,7 +327,7 @@ You can run the kit without Claude Code. You need a terminal: Terminal on a Mac,
    python3 -m pip install -r scripts/vault/requirements.txt
    ```
 
-   On Windows, create it with `py -m venv $HOME\homecloud-venv` and activate it with `$HOME\homecloud-venv\Scripts\Activate.ps1`. If PowerShell refuses, run `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser` once. Activate the environment again in each new window.
+   On Windows, create it with `py -m venv "$HOME/homecloud-venv"` and run its Python directly instead of activating it: `"$HOME/homecloud-venv/Scripts/python.exe" -m pip install -r scripts/requirements.txt`, with `&` in front in PowerShell. Use that Python for every Path A and Offline vault command.
 
 2. Set up the computer. One command installs Docker Desktop if it is missing, then Immich and Tailscale. It creates your Immich account and an API key for the import, and opens a page for your phone. It checks the computer first, shows its plan, and asks once before it changes anything.
 
@@ -338,7 +338,7 @@ You can run the kit without Claude Code. You need a terminal: Terminal on a Mac,
    On Windows:
 
    ```
-   powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
+   powershell -ExecutionPolicy Bypass -File scripts/setup.ps1
    ```
 
    Your Mac asks for its password, or Windows asks for permission, to install apps. A window asks you to choose an email and a password for Immich. The API key goes into `.homecloud/immich-api-key` in your home folder, which only your account can read, and nothing shows it. A browser window opens for the Tailscale sign-in. The setup ends with `Result: OK` and prints the address and email for your phone. If it stops, its last line says what to do. A second run skips what is done. On Windows, exit code 3 means that Windows must restart to finish WSL 2: restart, then run the same command again. In Offline vault mode, add `--no-tailscale` on a Mac or `-NoTailscale` on Windows. [scripts/immich/README.md](scripts/immich/README.md) and [scripts/tailscale.md](scripts/tailscale.md) show each part on its own, with the steps by hand.

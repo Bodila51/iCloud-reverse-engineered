@@ -55,6 +55,9 @@ function Assert-Deletable([string]$Path, [string]$What) {
     if ((Test-Under $Path $env:SystemRoot) -or (Test-Under $Path $env:APPDATA) -or (Test-Under $Path $env:LOCALAPPDATA)) {
         Stop-Script "Refusing to delete $Path as ${What}: it is inside a Windows or app data folder." 2
     }
+    if ($env:USERPROFILE -and (Test-Under $env:USERPROFILE $Path)) { Stop-Script "Refusing to delete $Path as ${What}: it contains your home folder." 2 }
+    $users = if ($env:USERPROFILE) { [System.IO.Path]::GetDirectoryName($env:USERPROFILE.TrimEnd('\')) } else { $null }
+    if ($users -and ([System.IO.Path]::GetDirectoryName($Path.TrimEnd('\')) -ieq $users)) { Stop-Script "Refusing to delete $Path as ${What}: it is a whole home folder." 2 }
     if ($env:OneDrive -and (Test-Under $env:OneDrive $Path)) { Stop-Script "Refusing to delete $Path as ${What}: it contains your OneDrive folder." 2 }
     $pictures = [Environment]::GetFolderPath('MyPictures')
     if (($pictures -and (Test-Under $Path (Join-Path $pictures 'iCloud Photos'))) -or ($Path -match '(?i)[\\/]iCloud ?Photos([\\/]|$)') -or ($Path -match '(?i)[\\/]iCloudDrive([\\/]|$)')) {
@@ -180,7 +183,7 @@ $interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedire
 if (-not $interactive) {
     Say 'Nothing was removed. This step needs your typed confirmation. Open PowerShell yourself,'
     Say 'go to the kit folder and run the same command there:'
-    $line = "  powershell -ExecutionPolicy Bypass -File scripts\immich\undo_windows.ps1 -AppDir ""$AppDir"""
+    $line = "  powershell -ExecutionPolicy Bypass -File scripts/immich/undo_windows.ps1 -AppDir ""$AppDir"""
     if ($Dir) { $line += " -Dir ""$Dir""" }
     Say $line
     exit 2
@@ -247,6 +250,6 @@ Say '  3. On the iPhone, press and hold the Tailscale and Immich icons and choos
 Say '     not delete any photo from the iPhone.'
 Say ''
 Say 'Keeping the PC awake: if you ran scripts\always_on\windows.ps1 -Apply, undo it with'
-Say '  powershell -ExecutionPolicy Bypass -File scripts\always_on\windows.ps1 -Undo'
+Say '  powershell -ExecutionPolicy Bypass -File scripts/always_on/windows.ps1 -Undo'
 if ($failed) { exit 1 }
 exit 0

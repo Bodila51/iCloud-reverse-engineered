@@ -324,7 +324,8 @@ class Asker:
             say(question)
             return getpass.getpass("Password (it stays hidden): ")
         raise Stop("There is no window or terminal to ask for the Immich password. Run the command "
-                   "in your own Terminal window, or pass the password with --password-stdin.", 2)
+                   "in your own Terminal window, where you type the password yourself. Never type it in a "
+                   "chat.", 2)
 
 
 def looks_like_email(text: str) -> bool:

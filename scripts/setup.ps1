@@ -513,7 +513,7 @@ function Install-Python([string]$Winget) {
     Update-ProcessPath
     $py = Find-Python
     if ($py -and $py.Version -ge $MinPython) {
-        Say "Python $($py.Version) is ready."
+        Say "Python $($py.Version) is ready: $($py.Exe -replace '\\','/')"
         return $py
     }
     Stop-Setup "Python did not install (winget exit code $code); install Python 3.12 from https://www.python.org/downloads/windows/ and run this again." 1

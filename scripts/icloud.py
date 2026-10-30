@@ -3035,6 +3035,10 @@ def _run_download_locked(cloud, args, out, root, retry_base):
 
 
 def _quote(path):
+    if os.name == "nt":
+        # PowerShell and Git Bash both read double quotes and forward slashes; Git Bash drops
+        # unquoted backslashes.
+        return '"%s"' % path.replace("\\", "/")
     return '"%s"' % path if (" " in path or "'" in path) else path
 
 

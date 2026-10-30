@@ -229,10 +229,10 @@ def python_command() -> str:
 
 
 def quote_arg(text: str) -> str:
-    """Quotes a path for the person's shell: double quotes on Windows (PowerShell and Git
-    Bash both read them), shell quoting elsewhere."""
+    """Quotes a path for the person's shell: on Windows, double quotes and forward slashes, which
+    PowerShell and Git Bash both read (Git Bash drops unquoted backslashes); shell quoting elsewhere."""
     if is_windows():
-        return f'"{text}"' if (not text or re.search(r"[\s&()\[\]{}^=;!'+,`~$@#%]", text)) else text
+        return '"' + text.replace("\\", "/") + '"'
     return shlex.quote(text)
 
 

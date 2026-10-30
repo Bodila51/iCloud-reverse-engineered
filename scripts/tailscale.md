@@ -6,7 +6,7 @@ Do these steps after Immich runs on your computer, as [immich/README.md](immich/
 
 ## The one-command way
 
-`scripts/setup.sh` on a Mac and `scripts\setup.ps1` on Windows run this part for you. To run only the Tailscale part, from the kit folder:
+`scripts/setup.sh` on a Mac and `scripts/setup.ps1` on Windows run this part for you. To run only the Tailscale part, from the kit folder:
 
 ```
 bash scripts/tailscale_setup.sh --yes
@@ -15,7 +15,7 @@ bash scripts/tailscale_setup.sh --yes
 On Windows:
 
 ```
-powershell -ExecutionPolicy Bypass -File scripts\tailscale_setup.ps1 -Yes
+powershell -ExecutionPolicy Bypass -File scripts/tailscale_setup.ps1 -Yes
 ```
 
 Without `--yes` (`-Yes` on Windows), it shows its plan and asks first. It does this:
