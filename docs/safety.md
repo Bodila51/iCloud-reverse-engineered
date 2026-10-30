@@ -44,7 +44,7 @@ On a PC, Claude Code copies the iCloud Photos folder with robocopy, the copy too
 
 With Path A, `scripts/icloud.py` sends only read requests to iCloud Photos. Every request is checked against a short list of read-only iCloud addresses before it leaves the computer. The one exception is `logout`, which ends this computer's session at Apple and changes nothing in your photos.
 
-With Path G, the browser script sends only list, info, and download requests to Google Photos. It never sends a request that changes anything: no delete, trash, archive, favorite, album, sharing, or Locked Folder request. It saves files only in the folder that you pick in the folder window and allow it to edit. With Google Takeout, the kit only reads the archives that you download.
+With Path G, the browser script sends only list, info, and download requests to Google Photos. It never sends a request that changes anything: no delete, trash, archive, favorite, album, sharing, or Locked Folder request. It saves files only in the folder that you pick in the folder window and allow it to edit. The files that the page may not fetch itself, it has the browser download from Google as zip files into your Downloads folder. `status` and `verify` unpack them into that folder and delete a zip file only when every file in it is there. They touch only the downloads that match what the script asked Google for, and leave every other file in the Downloads folder alone. With Google Takeout, the kit only reads the archives that you download.
 
 The Immich app only reads the photo library on your phone when it backs up. The only part of the app that removes photos from the phone is **Free Up Space**, which you start yourself.
 

@@ -2,8 +2,10 @@
 
 The scenarios run the script in tests/google_js/harness.mjs, a small fake photos.google.com
 page for Node.js 22: a fake batchexecute that answers in GPTK's format and checks each
-request, fake media hosts, and a folder handle that writes into a temporary folder. They
-are skipped when Node.js 22 or newer is not installed.
+request, fake media hosts with the credentials rules gpb measured, a folder handle that
+writes into a temporary folder, and a browser that saves the zip files that hidden frames
+open into a temporary Downloads folder. They are skipped when Node.js 22 or newer is not
+installed.
 """
 
 import collections
@@ -44,7 +46,15 @@ ITEM_KEYS = ["mediaKey", "takenTime", "fileName", "size", "kind", "live", "origi
              "albums", "path", "livePath"]
 DONE_KEYS = ["mediaKey", "path", "size", "livePath", "liveSize"]
 ERROR_KEYS = ["mediaKey", "error"]
-PROGRESS_KEYS = ["state", "listed", "done", "failed", "bytesDone", "bytesTotal", "message", "updated"]
+PROGRESS_KEYS = ["state", "listed", "done", "failed", "bytesDone", "bytesTotal", "zipFiles", "message", "updated"]
+BATCH_KEYS = ["format", "version", "batch", "created", "zips", "items"]
+BATCH_ITEM_KEYS = ["mediaKey", "fileName", "size", "kind", "live", "path", "livePath"]
+STATE_FILES = {"google-done.jsonl", "google-list.json", "google-progress.json"}
+FIFE = "photos.fife.usercontent.google.com"
+VIDEO_HOST = "video-downloads.googleusercontent.com"
+ZIP_HOST = "doc-export.googleusercontent.com"
+DOWNLOADS_FAILED = ("Nothing was changed in Google Photos. Tell Claude Code that the download failed. It can offer "
+                    "Google Takeout instead.")
 
 PATHS = {
     "K09": "2024/2024-07/IMG_0001.MOV",
@@ -100,12 +110,23 @@ def filled_script(where: Path, free_bytes, folder_name) -> Path:
     return out
 
 
-def run_page(scenario: str, folder: Path, run: int = 1, free_bytes=10 * GB, folder_name=USE_DIR_NAME) -> dict:
+def downloads_of(folder: Path) -> Path:
+    """The browser's Downloads folder in these scenarios: next to the copy."""
+    path = folder.parent / "Downloads"
+    path.mkdir(exist_ok=True)
+    return path
+
+
+def run_page(scenario: str, folder: Path, run: int = 1, free_bytes=10 * GB, folder_name=USE_DIR_NAME,
+             collector: bool = False) -> dict:
     name = folder.name if folder_name is USE_DIR_NAME else folder_name
     script = filled_script(folder.parent, free_bytes, name)
-    env = dict(os.environ, TZ="Asia/Tokyo")
-    proc = subprocess.run([NODE, str(HARNESS), "--scenario", scenario, "--dir", str(folder), "--run", str(run),
-                           "--script", str(script)], capture_output=True, text=True, timeout=240, env=env)
+    env = dict(os.environ, TZ="Asia/Tokyo", HOMECLOUD_HOME=str(folder.parent / "homecloud-home"))
+    command = [NODE, str(HARNESS), "--scenario", scenario, "--dir", str(folder), "--run", str(run),
+               "--script", str(script), "--downloads", str(downloads_of(folder))]
+    if collector:
+        command += ["--python", sys.executable, "--google-py", str(GOOGLE_PY)]
+    proc = subprocess.run(command, capture_output=True, text=True, timeout=240, env=env)
     assert proc.returncode == 0, proc.stderr[-4000:]
     summary = json.loads(proc.stdout.strip().splitlines()[-1])
     summary["stderr"] = proc.stderr
@@ -173,7 +194,12 @@ def read_done(folder: Path) -> List[dict]:
         if "error" in record:
             assert list(record) == ERROR_KEYS and isinstance(record["error"], str) and record["error"]
         else:
-            assert list(record) == DONE_KEYS
+            if "liveError" in record:
+                # A Live Photo saved without its video part, and why that part did not download.
+                assert list(record) == DONE_KEYS + ["liveError"] and record["livePath"] is None
+                assert isinstance(record["liveError"], str) and record["liveError"]
+            else:
+                assert list(record) == DONE_KEYS
             check_rel(record["path"])
             assert is_int(record["size"]) and record["size"] > 0
             if record["livePath"] is None:
@@ -186,8 +212,40 @@ def read_done(folder: Path) -> List[dict]:
 
 
 def last_done(folder: Path) -> Dict[str, dict]:
-    """The last line for each item, as google_photos.py verify reads it."""
-    return {record["mediaKey"]: record for record in read_done(folder)}
+    """The last line for each item, as google_photos.py verify reads it, with the items that
+    google_photos.py moved here from zip files in the Downloads folder."""
+    records = {record["mediaKey"]: record for record in read_done(folder)}
+    collected = folder / ".homecloud" / "google-collected.jsonl"
+    if collected.exists():
+        for line in collected.read_text(encoding="ascii").splitlines():
+            record = json.loads(line)
+            if "batch" in record:
+                assert list(record) == ["batch", "part", "files"]
+                continue
+            assert list(record) == DONE_KEYS
+            current = records.get(record["mediaKey"])
+            if current is None or "error" in current or (current["livePath"] is None and record["livePath"]):
+                records[record["mediaKey"]] = record
+    return records
+
+
+def read_batches(folder: Path) -> List[dict]:
+    """The batch files of the zip files in the Downloads folder: no download address in them."""
+    batches = []
+    base = folder / ".homecloud" / "google-batches"
+    for path in sorted(base.iterdir()) if base.exists() else []:
+        text = path.read_text(encoding="utf-8")
+        assert "https:" not in text and "SECRET-LINK" not in text and "TOKEN" not in text
+        data = json.loads(text)
+        assert list(data) == BATCH_KEYS and path.name == data["batch"] + ".json"
+        assert data["format"] == "homecloud-google-batch" and data["version"] == 1
+        parse_time(data["created"])
+        assert data["zips"] and all(list(z) == ["name", "size"] for z in data["zips"])
+        assert data["items"] and all(list(i) == BATCH_ITEM_KEYS for i in data["items"])
+        stems = [i["fileName"].rsplit(".", 1)[0].lower() for i in data["items"]]
+        assert len(stems) == len(set(stems))  # one item for each name in a zip file
+        batches.append(data)
+    return batches
 
 
 def read_progress(folder: Path) -> dict:
@@ -196,6 +254,8 @@ def read_progress(folder: Path) -> dict:
     assert data["state"] in ("listing", "downloading", "done", "failed", "stopped")
     for key in ("listed", "done", "failed", "bytesDone", "bytesTotal"):
         assert is_int(data[key]) and data[key] >= 0
+    assert list(data["zipFiles"]) == ["sent", "moved"]
+    assert 0 <= data["zipFiles"]["moved"] <= data["zipFiles"]["sent"]
     assert isinstance(data["message"], str) and data["message"]
     parse_time(data["updated"])
     return data
@@ -231,8 +291,11 @@ def assert_clean(summary: dict) -> None:
     assert "SECRET-LINK" not in summary["stderr"] and "AT-TOKEN" not in summary["stderr"]
 
 
-def assert_complete(folder: Path, summary: dict, data: dict, keys, expected: Optional[dict] = None) -> None:
-    """Every item of the list is on disk, with Google's bytes, and google-done.jsonl says so."""
+def assert_complete(folder: Path, summary: dict, data: dict, keys, expected: Optional[dict] = None,
+                    page_counts: bool = True) -> None:
+    """Every item of the list is on disk, with Google's bytes, and google-done.jsonl says so (or
+    google-collected.jsonl, for files that came in zip files). page_counts: the page counted them
+    all as done, because it saw them arrive."""
     expected = expected or summary["expected"]
     done = last_done(folder)
     want_files = {}
@@ -254,12 +317,15 @@ def assert_complete(folder: Path, summary: dict, data: dict, keys, expected: Opt
     for rel, want in want_files.items():
         assert on_disk[rel].stat().st_size == want["size"], rel
         assert sha256(on_disk[rel]) == want["sha256"], rel
-    assert sorted(p.name for p in (folder / ".homecloud").iterdir()) == [
-        "google-done.jsonl", "google-list.json", "google-progress.json"]
+    # google-done.jsonl is missing only when every file came in zip files; verify adds its manifest.
+    names = {p.name for p in (folder / ".homecloud").iterdir()}
+    assert STATE_FILES - {"google-done.jsonl"} <= names
+    assert names <= STATE_FILES | {"google-batches", "google-collected.jsonl", "manifest.jsonl"}
     progress = read_progress(folder)
     assert progress["state"] == "done"
-    assert progress["listed"] == progress["done"] == len(data["items"]) and progress["failed"] == 0
-    assert progress["bytesDone"] == progress["bytesTotal"] == data["totals"]["bytes"]
+    if page_counts:
+        assert progress["listed"] == progress["done"] == len(data["items"]) and progress["failed"] == 0
+        assert progress["bytesDone"] == progress["bytesTotal"] == data["totals"]["bytes"]
 
 
 def assert_items(data: dict, summary: dict, paths: Dict[str, str]) -> None:
@@ -272,12 +338,13 @@ def assert_items(data: dict, summary: dict, paths: Dict[str, str]) -> None:
         for field in ("fileName", "takenTime", "kind", "live", "favorite", "archived", "originalQuality"):
             assert item[field] == facts[field], (key, field)
         assert item["albums"] == ALBUMS.get(key, [])
-        if item["live"] and summary["liveRule"] != "exact":
+        if item["live"]:
+            # verify reads the sizes of a Live Photo's two files from google-done.jsonl.
             assert item["size"] is None
         else:
             assert item["size"] == facts["googleSize"]
     assert data["albums"] == GOOGLE_ALBUMS
-    assert data["totals"]["bytes"] == sum(library[i["mediaKey"]]["googleSize"] for i in data["items"])
+    assert data["totals"]["bytes"] == sum(library[i["mediaKey"]]["googleSize"] or 0 for i in data["items"])
 
 
 def fetches(summary: dict, outcome: Optional[str] = "ok") -> collections.Counter:
@@ -285,19 +352,25 @@ def fetches(summary: dict, outcome: Optional[str] = "ok") -> collections.Counter
                                if outcome is None or m["outcome"] == outcome)
 
 
-def verify(folder: Path, tmp_path: Path) -> subprocess.CompletedProcess:
+def verify(folder: Path, tmp_path: Path, downloads: Optional[Path] = None) -> subprocess.CompletedProcess:
+    """google_photos.py verify, which first moves zip files from the given Downloads folder (an
+    empty one by default)."""
+    if downloads is None:
+        downloads = tmp_path / "no-downloads"
+        downloads.mkdir(exist_ok=True)
     env = dict(os.environ, HOMECLOUD_HOME=str(tmp_path / "homecloud-home"))
-    return subprocess.run([sys.executable, str(GOOGLE_PY), "verify", "--to", str(folder)], capture_output=True,
-                          text=True, timeout=120, env=env)
+    return subprocess.run([sys.executable, str(GOOGLE_PY), "verify", "--to", str(folder), "--downloads",
+                           str(downloads)], capture_output=True, text=True, timeout=120, env=env)
 
 
-def assert_verify_ok(folder: Path, tmp_path: Path, count: int) -> None:
+def assert_verify_ok(folder: Path, tmp_path: Path, count: int, downloads: Optional[Path] = None) -> str:
     if not GOOGLE_PY.exists():
-        return
-    proc = verify(folder, tmp_path)
+        return ""
+    proc = verify(folder, tmp_path, downloads)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     last = proc.stdout.strip().splitlines()[-1]
     assert last.startswith("Result: OK. %d of %d items" % (count, count)), proc.stdout
+    return proc.stdout
 
 
 @pytest.fixture
@@ -381,15 +454,21 @@ def test_full_library_with_albums_archive_and_a_live_photo(folder, tmp_path):
     assert "Click Start" in s["firstText"] and '"Google Photos"' in s["firstText"]
 
     data = read_list(folder)
-    assert data["method"] == "item-url, credentials include"
+    assert data["method"] == "item-url"
     assert_items(data, s, PATHS)
     assert_complete(folder, s, data, PATHS)
-    # Each file once, the original of the edited photo, and the video again after its 503.
+    # Each original once from [1], never the display address at [7], the video again after its
+    # 503, and the photo again after a download that ended before its Content-Length.
     want = collections.Counter({(key, "orig"): 1 for key in PATHS})
     want[("K03", "orig")] = 2
+    want[("K04", "orig")] = 2
     want[("K01", "live")] = 1
     assert fetches(s, None) == want
-    assert {m["cred"] for m in s["media"]} == {"include"}
+    assert [m["outcome"] for m in s["media"] if m["key"] == "K04"] == ["short", "ok"]
+    # gpb's rules: the session for photos.fife.usercontent.google.com, none for video-downloads.
+    assert {(m["host"], m["cred"]) for m in s["media"]} == {(FIFE, "include"), (VIDEO_HOST, "omit")}
+    assert s["blocked"] == 0 and s["navigations"] == []
+    assert read_progress(folder)["zipFiles"] == {"sent": 0, "moved": 0}
     assert_verify_ok(folder, tmp_path, 13)
 
 
@@ -401,7 +480,7 @@ def test_size_check_stops_before_any_download(folder):
     assert s["message"].startswith("Not enough free space. Your photos and videos need about 400 KB, but only "
                                    "300 KB may be used on this disk.")
     assert "Nothing was downloaded." in s["message"] and "tell Claude Code" in s["message"]
-    assert s["media"] == []
+    assert s["media"] == [] and s["navigations"] == []
     assert not {"VrseUb", "yCLA7", "dnv2s"} & set(s["rpc"])
     data = read_list(folder)
     assert data["method"] == "none" and len(data["items"]) == 13
@@ -417,43 +496,167 @@ def test_blocked_item_urls_fall_back_to_the_zip_route(folder, tmp_path):
     assert_clean(s)
     assert s["state"] == "done"
     data = read_list(folder)
-    assert data["method"] == "zip, credentials include"
+    assert data["method"] == "zip"
     assert_items(data, s, PATHS)
     assert_complete(folder, s, data, PATHS)
-    # The first photo, video and Live Photo find the route; the rest go straight to it.
-    assert s["blocked"] <= 16
+    # The first photo, video and Live Photo try both credentials modes twice; the rest go
+    # straight to the zip route.
+    assert s["blocked"] == 12
     assert s["rpc"]["VrseUb"] == 3 and s["rpc"]["yCLA7"] == 13
     assert fetches(s) == collections.Counter({(key, "zip"): 1 for key in PATHS})
+    assert s["navigations"] == []
     assert_verify_ok(folder, tmp_path, 13)
 
 
 @needs_node
-def test_credentials_blocked_falls_back_to_omit(folder, tmp_path):
-    s = run_page("omit", folder)
+def test_credentials_follow_each_host_and_switch_after_401_or_403(folder, tmp_path):
+    s = run_page("swap", folder)
     assert_clean(s)
     assert s["state"] == "done"
     data = read_list(folder)
-    assert data["method"] == "item-url, credentials omit"
+    assert data["method"] == "item-url"
     assert_complete(folder, s, data, PATHS)
-    assert s["blocked"] == 6
-    assert {m["cred"] for m in s["media"] if m["outcome"] == "ok"} == {"omit"}
+    # One refusal per host and part, then the other mode for the rest of the run.
+    refused = [(m["host"], m["cred"], m["outcome"]) for m in s["media"] if m["outcome"] != "ok"]
+    assert refused == [(FIFE, "include", "403"), (VIDEO_HOST, "omit", "401")]
+    assert {(m["host"], m["cred"]) for m in s["media"] if m["outcome"] == "ok"} == {(FIFE, "omit"),
+                                                                                  (VIDEO_HOST, "include")}
     assert "yCLA7" not in s["rpc"]
+    assert_verify_ok(folder, tmp_path, 13)
 
 
 @needs_node
-def test_nothing_works_stops_with_a_plain_message(folder):
-    s = run_page("broken", folder)
+def test_without_content_length_an_item_without_size_comes_from_the_zip(folder, tmp_path):
+    s = run_page("nolength", folder)
+    assert_clean(s)
+    assert s["state"] == "done"
+    data = read_list(folder)
+    assert data["method"] == "item-url"
+    assert_items(data, s, PATHS)
+    assert_complete(folder, s, data, PATHS)
+    k07 = next(i for i in data["items"] if i["mediaKey"] == "K07")
+    assert k07["size"] is None
+    # Google gives no size for K07 and the host no Content-Length, so its bytes cannot be checked:
+    # the zip, whose sizes can, brings it. Every other file is checked against Google's size.
+    got = fetches(s)
+    assert got[("K07", "orig")] == 1 and got[("K07", "zip")] == 1
+    assert s["rpc"]["yCLA7"] == 1
+    assert_verify_ok(folder, tmp_path, 13)
+
+
+@needs_node
+def test_nothing_fetches_in_the_page_so_zip_files_go_to_downloads(folder, tmp_path):
+    s = run_page("downloads", folder)
+    assert_clean(s)
+    assert s["state"] == "done"
+    assert s["message"] == ("Finished in this tab. 0 of 13 items are in the folder. The browser is still saving 13 of "
+                            "them as zip files in your Downloads folder. When its download list shows them complete, "
+                            "go back to Claude Code. It moves them into the folder.")
+    data = read_list(folder)
+    assert data["method"] == "zip files in Downloads"
+    assert_items(data, s, PATHS)
+    # 4 batches, since 4 items are called IMG_0001: 3 zip files for the first, one for each other.
+    batches = read_batches(folder)
+    assert len(batches) == 4 and sum(len(b["zips"]) for b in batches) == 6
+    assert sorted(i["mediaKey"] for b in batches for i in b["items"]) == sorted(PATHS)
+    assert len(s["navigations"]) == 6 and s["allowPrompts"] == 1
+    downloads = downloads_of(folder)
+    assert s["downloadsLeft"] == sorted(p.name for p in downloads.iterdir())
+    assert "Photos-001 (1).zip" in s["downloadsLeft"] and len(s["downloadsLeft"]) == 6
+    assert files_on_disk(folder) == {}
+    assert read_progress(folder)["zipFiles"] == {"sent": 6, "moved": 0}
+
+    out = assert_verify_ok(folder, tmp_path, 13, downloads)
+    assert "Moved 14 files from 6 downloads in the Downloads folder" in out
+    assert "Zip files from the browser: 6 of 6 moved into the folder." in out
+    assert list(downloads.iterdir()) == []
+    assert_complete(folder, s, data, PATHS, page_counts=False)
+
+
+@needs_node
+def test_zip_files_that_nobody_moves_stop_the_run(folder, tmp_path):
+    # With 4 MB free, at most 400 KB may wait in the Downloads folder: the first two batches
+    # (385 KB in 3 zip files, and the Live Photo) fill it.
+    s = run_page("downloads", folder, free_bytes=4 * 1000 ** 2)
     assert_clean(s)
     assert s["state"] == "failed"
-    assert s["message"].startswith("Downloads do not work from this page. Photos did not download (")
-    assert "Nothing was changed in Google Photos. Tell Claude Code that the download failed. It can offer Google " \
-           "Takeout instead." in s["message"]
-    assert len(s["message"]) <= 300
+    assert s["message"] == ("The zip files did not reach the folder in time. Nothing was changed in Google Photos. If "
+                            "the browser asked to download multiple files, click Allow. Then go back to Claude Code. "
+                            "It moves the zip files from your Downloads folder into the folder, and then you click "
+                            "Start to continue.")
+    assert len(s["navigations"]) == 4 and len(read_batches(folder)) == 2
+    if not GOOGLE_PY.exists():
+        return
+    proc = verify(folder, tmp_path, downloads_of(folder))
+    assert proc.returncode == 1
+    assert "Moved 12 files from 4 downloads" in proc.stdout
+    assert "Result: NOT COMPLETE. 11 of 13 items" in proc.stdout
+
+
+@needs_node
+def test_status_moves_zip_files_while_the_page_works(folder, tmp_path):
+    if not GOOGLE_PY.exists():
+        pytest.skip("scripts/google/google_photos.py is not there")
+    s = run_page("collect", folder, collector=True)
+    assert_clean(s)
+    assert s["state"] == "done"
+    assert s["message"] == "Done. All 13 items are in the folder. Go back to Claude Code."
+    assert s["collectorRuns"] >= 2 and len(s["navigations"]) == 6
+    assert read_progress(folder)["zipFiles"] == {"sent": 6, "moved": 6}
+    assert list(downloads_of(folder).iterdir()) == []
+    data = read_list(folder)
+    assert_complete(folder, s, data, PATHS)
+    assert_verify_ok(folder, tmp_path, 13)
+
+
+@needs_node
+def test_no_download_token_stops_with_a_plain_message(folder):
+    s = run_page("notoken", folder)
+    assert_clean(s)
+    assert s["state"] == "failed"
+    assert s["message"] == ("Downloads do not work from this page. Your photos and videos did not download (Google "
+                            "gave no download token). " + DOWNLOADS_FAILED)
     assert {m["outcome"] for m in s["media"]} == {"blocked"}
-    assert files_on_disk(folder) == {}
+    assert s["navigations"] == [] and files_on_disk(folder) == {}
     assert all("error" in r for r in read_done(folder))
-    assert read_list(folder)["method"] == "none"
+    assert read_list(folder)["method"] == "zip files in Downloads"
     assert read_progress(folder)["state"] == "failed"
+
+
+@needs_node
+def test_a_page_that_forbids_frames_stops_with_a_plain_message(folder):
+    s = run_page("framecsp", folder)
+    assert_clean(s)
+    assert s["state"] == "failed"
+    assert s["message"] == "This page does not let the panel start downloads. " + DOWNLOADS_FAILED
+    assert s["cspEvents"] >= 1 and s["downloadsLeft"] == []
+    assert files_on_disk(folder) == {}
+
+
+@needs_node
+def test_a_live_photo_whose_video_part_fails_keeps_its_photo(folder, tmp_path):
+    s = run_page("livefail", folder)
+    assert_clean(s)
+    assert s["state"] == "done"
+    assert s["message"].startswith("Finished in this tab. 13 of 13 items are in the folder. The browser is still "
+                                   "saving zip files in your Downloads folder.")
+    k01 = last_done(folder)["K01"]
+    assert k01["livePath"] is None and k01["liveSize"] is None and k01["size"] == 6000
+    assert k01["liveError"] == "The browser could not fetch the file."
+    assert (folder / PATHS["K01"]).stat().st_size == 6000 and not (folder / LIVE_PATHS["K01"]).exists()
+    # The video part gets one more chance in a zip file in the Downloads folder.
+    batches = read_batches(folder)
+    assert [[i["mediaKey"] for i in b["items"]] for b in batches] == [["K01"]]
+    if not GOOGLE_PY.exists():
+        return
+    out = assert_verify_ok(folder, tmp_path, 13)
+    assert "Live Photos saved without their video part, because it did not download: 1." in out
+    assert "Zip files from the browser: 0 of 1 moved into the folder." in out
+    out = assert_verify_ok(folder, tmp_path, 13, downloads_of(folder))
+    assert "Moved 1 file from 1 download" in out and "Live Photo video parts: 1 of 1" in out
+    assert (folder / LIVE_PATHS["K01"]).stat().st_size == s["expected"]["K01"]["live"]["size"]
+    assert sha256(folder / LIVE_PATHS["K01"]) == s["expected"]["K01"]["live"]["sha256"]
+    assert list(downloads_of(folder).iterdir()) == []
 
 
 @needs_node
@@ -462,7 +665,7 @@ def test_second_run_resumes_and_keeps_paths(folder, tmp_path):
     assert_clean(first)
     assert first["state"] == "stopped" and first["message"] == STOPPED_TEXT
     listed = read_list(folder)
-    assert listed["method"] == "item-url, credentials include"
+    assert listed["method"] == "item-url"
     assert {i["mediaKey"]: i["path"] for i in listed["items"]} == PATHS
     done1 = {k for k, r in last_done(folder).items() if "error" not in r}
     assert {"K02", "K09", "K01"} <= done1 and "K10" not in done1
@@ -478,13 +681,18 @@ def test_second_run_resumes_and_keeps_paths(folder, tmp_path):
     lines = done_file.read_text(encoding="utf-8").splitlines(True)
     done_file.write_text("".join(line for line in lines if '"K09"' not in line), encoding="utf-8")
 
-    # Google now lists K20, and no longer K02 (finished) or K10 (never downloaded).
+    # Google now lists K20, and no longer K02 (finished) or K10 (never downloaded). The first two
+    # photos fail every way at first, but photos worked in this folder before, so the run goes
+    # on in the page and each of them gets its own chance.
     second = run_page("resume", folder, run=2)
     assert_clean(second)
     assert second["state"] == "done"
+    assert second["navigations"] == [] and not (folder / ".homecloud" / "google-batches").exists()
+    assert second["blocked"] == 16 and second["rpc"]["yCLA7"] == 2
     paths = dict(PATHS, K20="2024/2024-07/IMG_0001 (4).HEIC")
     del paths["K10"]
     data = read_list(folder)
+    assert data["method"] == "item-url"
     assert {i["mediaKey"]: i["path"] for i in data["items"]} == paths
     # K02 is no longer listed, so its bytes are the ones of the first run.
     assert_complete(folder, second, data, paths, dict(first["expected"], **second["expected"]))
@@ -500,6 +708,7 @@ def test_second_run_resumes_and_keeps_paths(folder, tmp_path):
     assert k02["size"] == 5000 and k02["fileName"] == "IMG_0001.HEIC"
     k01 = next(i for i in data["items"] if i["mediaKey"] == "K01")
     assert k01["size"] is None and second["liveRule"] == "both"
+    assert last_done(folder)["K01"]["liveSize"] == second["expected"]["K01"]["live"]["size"]
     assert not (folder / PATHS["K10"]).exists()
     assert_verify_ok(folder, tmp_path, len(paths))
 
@@ -513,6 +722,7 @@ def test_no_connection_says_so(folder):
                             "Start. It continues where it stopped.")
     assert s["offlineTries"] == 6
     assert sorted(p.name for p in (folder / ".homecloud").iterdir()) == ["google-progress.json"]
+    assert s["navigations"] == []
     assert files_on_disk(folder) == {}
 
 

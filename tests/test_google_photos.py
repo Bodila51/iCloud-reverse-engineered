@@ -78,6 +78,9 @@ def test_prepare_fills_the_settings_line(tmp_path, stub_script, no_desktop, monk
     assert "keeps 10.0 GB of it free as a safety margin" in out
     assert "allow pasting" in out and "scammers" in out
     assert "verify --to" in out and "\u2014" not in out
+    assert "If the browser says that photos.google.com wants to download multiple files, click Allow." in out
+    assert "status and verify unpack the files of each one into the folder" in out
+    assert "status --to DIR --wait 100" in gp.__doc__
 
 
 def test_prepare_keeps_the_script_ascii_for_any_folder_name(tmp_path, stub_script, no_desktop, monkeypatch):
@@ -382,6 +385,170 @@ def test_import_library_knows_the_google_source():
     copy_step, verify_step = imp.SOURCE_STEPS["google-web"]
     assert verify_step == "python3 scripts/google/google_photos.py verify --to DIR"
     assert "google_photos.py prepare --to DIR" in copy_step
+
+
+def test_verify_accepts_a_live_photo_saved_without_its_video_part(tmp_path, capsys):
+    done = [dict(DONE[0], livePath=None, liveSize=None, liveError="The browser could not fetch the file.")] + DONE[1:]
+    sizes = dict(SIZES)
+    del sizes["2019/2019-05/IMG_0001.MOV"]
+    folder = make_copy(tmp_path / "copy", done=done, sizes=sizes)
+    code, out = run_verify(folder, capsys)
+    assert code == 0
+    assert result_line(out) == "Result: OK. 4 of 4 items are on disk with the right size."
+    assert "Live Photos saved without their video part, because it did not download: 1." in out
+    assert "IMG_0001.HEIC, taken 2019-05-04: The browser could not fetch the file." in out
+    assert {e.path for e in imp.load_manifest(folder)} == set(sizes)
+
+
+# ------------------------------------------------------------- zip files in Downloads
+
+def zip_bytes(members):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, data in members:
+            zf.writestr(name, data)
+    return buf.getvalue()
+
+
+def write_batch(folder, batch_id, keys, zips):
+    """A batch file as the browser script writes it, for items of ITEMS."""
+    by_key = {i["mediaKey"]: i for i in ITEMS}
+    items = [{"mediaKey": k, "fileName": by_key[k]["fileName"], "size": by_key[k]["size"], "kind": by_key[k]["kind"],
+              "live": by_key[k]["live"], "path": by_key[k]["path"], "livePath": by_key[k]["livePath"]} for k in keys]
+    base = folder / ".homecloud" / "google-batches"
+    base.mkdir(parents=True, exist_ok=True)
+    data = {"format": "homecloud-google-batch", "version": 1, "batch": batch_id, "created": "2026-10-30T10:00:00.000Z",
+            "zips": [{"name": name, "size": len(data)} for name, data in zips], "items": items}
+    (base / (batch_id + ".json")).write_text(json.dumps(data), encoding="utf-8")
+
+
+def collected_lines(folder):
+    path = folder / ".homecloud" / "google-collected.jsonl"
+    return [json.loads(line) for line in path.read_text(encoding="ascii").splitlines()] if path.exists() else []
+
+
+def test_status_moves_zip_files_from_downloads_and_deletes_them(tmp_path, capsys):
+    # The page fetched DDD itself; the rest came as zip files in the Downloads folder.
+    folder = make_copy(tmp_path / "copy", done=[DONE[4]], sizes={"2021/2021-01/IMG_0003 (2).JPG": 5})
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    first = zip_bytes([("Google Photos/IMG_0001.HEIC", b"a" * 4), ("Google Photos/IMG_0001.MOV", b"m" * 7),
+                       ("VID_0002.MP4", b"v" * 10), ("IMG_0003.JPG", b"c" * 16)])
+    second = zip_bytes([("IMG_0003.JPG", b"x" * 5)])
+    write_batch(folder, "20261030T100000-0001", ["AAA", "BBB", "CCC"], [("Photos-001.zip", first)])
+    write_batch(folder, "20261030T100000-0002", ["DDD"], [("Photos-001.zip", second)])
+    (downloads / "Photos-001.zip").write_bytes(first)
+    (downloads / "Photos-001 (1).zip").write_bytes(second)
+    (downloads / "Photos-002.zip.crdownload").write_bytes(first)  # still downloading: left alone
+    (downloads / "notes.txt").write_bytes(b"n" * len(first))  # same size, not a zip of a batch
+
+    assert gp.main(["status", "--to", str(folder), "--downloads", str(downloads)]) == 0
+    out = capsys.readouterr().out
+    # DDD is in place already, with the same size: its zip file counts as used and goes too.
+    assert f"Moved 4 files from 2 downloads in the Downloads folder into {folder}." in out
+    assert "Zip files from the browser: 2 of 2 moved into the folder." in out
+    assert sorted(p.name for p in downloads.iterdir()) == ["Photos-002.zip.crdownload", "notes.txt"]
+    assert (folder / "2019/2019-05/IMG_0001.MOV").read_bytes() == b"m" * 7
+    assert (folder / "2021/2021-01/IMG_0003.JPG").read_bytes() == b"c" * 16
+    assert (folder / "2021/2021-01/IMG_0003 (2).JPG").read_bytes() == b"x" * 5
+    lines = collected_lines(folder)
+    assert {"mediaKey": "AAA", "path": "2019/2019-05/IMG_0001.HEIC", "size": 4,
+            "livePath": "2019/2019-05/IMG_0001.MOV", "liveSize": 7} in lines
+    assert {"batch": "20261030T100000-0001", "part": 0, "files": 4} in lines
+    assert {"batch": "20261030T100000-0002", "part": 0, "files": 1} in lines
+    assert not [p for p in folder.rglob("*") if p.name.endswith(gp.PIECE_SUFFIX)]
+
+    # verify reads the moved items from google-collected.jsonl; a second look moves nothing.
+    code, out = run_verify(folder, capsys)
+    assert code == 0 and result_line(out) == "Result: OK. 4 of 4 items are on disk with the right size."
+    assert "Moved" not in out and "Live Photo video parts: 1 of 1" in out
+
+
+def test_collect_checks_sizes_and_keeps_a_zip_with_other_files(tmp_path, capsys):
+    folder = make_copy(tmp_path / "copy", done=[], sizes={})
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    data = zip_bytes([("IMG_0001.HEIC", b"a" * 4), ("IMG_0001.MOV", b"m" * 7), ("VID_0002.MP4", b"v" * 9),
+                      ("IMG_0001-edited.HEIC", b"e" * 3)])
+    write_batch(folder, "b1", ["AAA", "BBB"], [("Photos-001.zip", data)])
+    (downloads / "Photos-001.zip").write_bytes(data)
+    assert gp.main(["status", "--to", str(folder), "--downloads", str(downloads)]) == 0
+    out = capsys.readouterr().out
+    assert "VID_0002.MP4: the zip file holds 9 bytes, Google lists 10. It was not moved" in out
+    assert "Left in the Downloads folder: Photos-001.zip." in out
+    assert (downloads / "Photos-001.zip").exists()
+    assert (folder / "2019/2019-05/IMG_0001.HEIC").exists() and not (folder / "2020/2020-01/VID_0002.MP4").exists()
+    code, out = run_verify(folder, capsys)
+    assert code == 1 and "VID_0002.MP4, taken 2020-01-01, should be at" in out
+
+
+def test_collect_moves_a_video_that_came_as_a_plain_file(tmp_path, capsys):
+    folder = make_copy(tmp_path / "copy", done=[], sizes={})
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    write_batch(folder, "b1", ["BBB"], [("VID_0002.MP4", b"v" * 10)])
+    (downloads / "VID_0002 (1).MP4").write_bytes(b"v" * 10)
+    assert gp.main(["status", "--to", str(folder), "--downloads", str(downloads)]) == 0
+    assert "Moved 1 file from 1 download" in capsys.readouterr().out
+    assert list(downloads.iterdir()) == []
+    assert (folder / "2020/2020-01/VID_0002.MP4").read_bytes() == b"v" * 10
+    assert collected_lines(folder)[0]["mediaKey"] == "BBB"
+
+
+def test_status_keeps_waiting_while_zip_files_are_still_coming(tmp_path, monkeypatch, capsys):
+    folder = make_copy(tmp_path / "copy", done=[], sizes={})
+    now = gp.datetime.datetime.now(gp.datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    write_progress(folder, "done", listed=4, done=0, failed=0, updated=now)
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    write_batch(folder, "b1", ["BBB"], [("VID_0002.MP4", b"v" * 10)])
+    clock = {"now": 0.0, "sleeps": []}
+
+    def sleep(seconds):
+        clock["sleeps"].append(seconds)
+        clock["now"] += seconds
+        if len(clock["sleeps"]) == 2:
+            (downloads / "VID_0002.MP4").write_bytes(b"v" * 10)
+
+    monkeypatch.setattr(gp, "_clock", lambda: clock["now"])
+    monkeypatch.setattr(gp, "_sleep", sleep)
+    assert gp.main(["status", "--to", str(folder), "--wait", "100", "--downloads", str(downloads)]) == 0
+    assert clock["sleeps"] == [10, 10]
+    assert "Zip files from the browser: 1 of 1 moved into the folder." in capsys.readouterr().out
+
+    # A zip file that never comes: status says so at the end of the wait, and exits with 4 while
+    # the page's run ended only minutes ago.
+    write_batch(folder, "b2", ["CCC"], [("Photos-001.zip", b"z" * 30)])
+    clock["sleeps"].clear()
+    assert gp.main(["status", "--to", str(folder), "--wait", "20", "--downloads", str(downloads)]) == 4
+    assert "The browser is still saving the rest in the Downloads folder." in capsys.readouterr().out
+    write_progress(folder, "done", listed=4, done=0, failed=0)  # a run that ended long ago
+    assert gp.main(["status", "--to", str(folder), "--downloads", str(downloads)]) == 0
+    assert "1 zip file did not arrive in the Downloads folder." in capsys.readouterr().out
+
+
+def test_downloads_folders_on_each_system(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / "Downloads").mkdir(parents=True)
+    (home / "Telechargements").mkdir()
+    (home / ".config").mkdir()
+    (home / ".config" / "user-dirs.dirs").write_text('XDG_DOWNLOAD_DIR="$HOME/Telechargements"\n', encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setattr(gp.Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(gp, "is_windows", lambda: False)
+    monkeypatch.setattr(gp.sys, "platform", "linux")
+    assert gp.downloads_folders() == [(home / "Telechargements").resolve(), (home / "Downloads").resolve()]
+    monkeypatch.setattr(gp.sys, "platform", "darwin")
+    assert gp.downloads_folders() == [(home / "Downloads").resolve()]
+    moved = tmp_path / "D" / "Downloads"
+    moved.mkdir(parents=True)
+    monkeypatch.setattr(gp, "is_windows", lambda: True)
+    monkeypatch.setattr(gp.sys, "platform", "win32")
+    monkeypatch.setattr(gp, "windows_downloads", lambda: moved)
+    assert gp.downloads_folders() == [moved.resolve(), (home / "Downloads").resolve()]
+    assert gp.downloads_folders([str(tmp_path / "nothing"), str(moved)]) == [moved.resolve()]
 
 
 # --------------------------------------------------------------------------- takeout

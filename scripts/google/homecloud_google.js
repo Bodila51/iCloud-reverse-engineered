@@ -16,8 +16,13 @@
  *   4. Downloads the first items to find a download method that works. Then it
  *      downloads every original file, and the video part of each Live Photo,
  *      3 at a time.
- *   5. Writes google-list.json, google-done.jsonl and google-progress.json in
- *      DIR/.homecloud, which scripts/google/google_photos.py reads.
+ *   5. Files that this page cannot fetch go to the browser's Downloads folder
+ *      as zip files, the way the Download command of Google Photos saves them.
+ *      scripts/google/google_photos.py status and verify move the files from
+ *      those zip files into the folder.
+ *   6. Writes google-list.json, google-done.jsonl and google-progress.json in
+ *      DIR/.homecloud, and one file per batch of zip files in
+ *      DIR/.homecloud/google-batches. scripts/google/google_photos.py reads them.
  *
  * It only reads from Google Photos. Every internal request goes through
  * makeApiRequest(), which refuses any request id that is not in
@@ -27,21 +32,61 @@
  * WIZ_global_data, as the page does, sends them only to photos.google.com, and
  * never prints or stores them or any download link.
  *
- * Download methods, tried in this order on the first items:
- *   item-url  The item info request VrseUb returns downloadOriginalUrl,
- *             downloadUrl and livePhotoVideoDownloadUrl (GPTK
- *             src/api/parser.ts lines 310, 311 and 321). This page fetches
- *             that address with credentials "include", the way GPTK fetches
- *             media from Google's media host inside this page (GPTK
- *             src/filters.ts lines 366 to 377).
- *   zip       The web app's own Download route: yCLA7 asks for a download
- *             token, and dnv2s returns the address of a zip file when it is
- *             ready (GPTK src/api/api.ts lines 476 to 503, src/api/parser.ts
- *             lines 333 to 340). This page fetches the zip and saves the files
- *             inside it.
- * Each method is tried with credentials "include" first, then "omit". A file
- * counts only when its size matches the size Google reports for it. The method
- * that works is written into google-list.json as "method".
+ * Download methods, in this order:
+ *   item-url   The item info request VrseUb returns the address of the
+ *              original at [1] (GPTK src/api/parser.ts line 310, downloadUrl).
+ *              gpb fetches originals from there (internal/gphotos/download.go,
+ *              downloadURLIndex; in its testdata/download-url.json, [1] is the
+ *              signed original and [7] an lh3.google.com display address), so
+ *              [7] (parser.ts line 311) is used only when [1] is empty. The video
+ *              part of a Live Photo comes from livePhotoVideoDownloadUrl
+ *              (parser.ts line 321).
+ *   zip        The web app's own Download route: yCLA7 asks for a download
+ *              token, and dnv2s returns the address of a zip file when it is
+ *              ready (GPTK src/api/api.ts lines 476 to 503, src/api/parser.ts
+ *              lines 333 to 340). This page fetches the zip and saves the files
+ *              inside it.
+ *   Downloads  The same zip files, for batches of items, downloaded by the
+ *              browser itself: a hidden frame opens each zip address, and the
+ *              browser saves the zip in its Downloads folder. A page may not
+ *              read Google's media addresses with fetch (gphotos-storage-recovery
+ *              README.md line 131: "In-page fetch is CORS-blocked"), but the
+ *              browser may download them. Chromium lets a frame navigation
+ *              without a click become a download unless the frame is sandboxed
+ *              or an ad (third_party/blink/common/navigation/navigation_policy.cc,
+ *              ApplyDownloadFramePolicy), and asks once before a page downloads
+ *              more than one file: "wants to download multiple files"
+ *              (chrome/browser/download/download_request_limiter.h,
+ *              components/permissions_strings.grdp). This route is used for the
+ *              kinds of items (photos, videos, Live Photos) that this page could
+ *              not fetch, unless they were fetched here in an earlier run in
+ *              this folder, and for each item that the other methods missed.
+ *              Each batch file names the items in each zip, with their paths.
+ *              It holds no download address. Zip files that are not moved
+ *              into the folder yet may hold a tenth of the free space that
+ *              Claude Code measured, 4 GB at most: the run waits for
+ *              google_photos.py to move them, and stops with a message when
+ *              they do not arrive.
+ *
+ * Credentials: a fetch sends the Google session ("include") or not ("omit"),
+ * chosen per host and per part (photo or video). After a 401 or 403 answer or a
+ * blocked fetch, the other mode is tried. gpb DESIGN.md lines 1690 to 1703:
+ * photos.fife.usercontent.google.com needs the session, and
+ * video-downloads.googleusercontent.com does not take it, so these two hosts
+ * start with "include" and "omit". The modes that work are kept for the run.
+ *
+ * Sizes: a file counts only when its size is Google's size for it. Google gives
+ * the size of a Live Photo either for the photo alone or for the photo and its
+ * video together. When Google gives no size, every file must match the
+ * Content-Length of its download or its size in the zip. When only the video
+ * part of a Live Photo fails, the photo is saved alone, and its line in
+ * google-done.jsonl says why, so the next run tries the video part again.
+ *
+ * Sources besides GPTK: gpb by sodre90, https://github.com/sodre90/gpb at
+ * commit d8e66ca81832f2b750ac452bad0c3021902c004d; gphotos-storage-recovery by
+ * nbarari, https://github.com/nbarari/gphotos-storage-recovery at commit
+ * a5ed462960bbfeb57c0a0cedc4a501eaf75b74dd; Chromium,
+ * https://github.com/chromium/chromium.
  *
  * Request formats and response parsing are copied from Google-Photos-Toolkit
  * (GPTK) by xob0t, https://github.com/xob0t/Google-Photos-Toolkit at commit
@@ -95,9 +140,22 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
   const INFO_CHUNK = 5000;
   const INFO_CHUNK_SMALL = 500;
   const LIVE_GUESS_BYTES = 3000000; // a Live Photo's video part, until one has arrived
-  const MAX_FAILS_IN_A_ROW = 20;
+  const MAX_FAILS_IN_A_ROW = 20; // of one kind, before that kind goes to the Downloads folder
+  const DEAD_AFTER = 5; // items in a row that a host or the zip route failed, before it is skipped
   const DONE_FLUSH_MS = 10000;
   const PROGRESS_MS = 2000;
+  // Zip files in the Downloads folder: batches of at most 200 items and 1 GB, and at most a
+  // tenth of the free space (4 GB at most) in zip files that are not moved into the folder yet.
+  const BATCHES_DIR = 'google-batches';
+  const COLLECTED_FILE = 'google-collected.jsonl'; // written by google_photos.py
+  const BATCH_ITEMS = 200;
+  const BATCH_BYTES = 1e9;
+  const WINDOW_BYTES = 4e9;
+  const POLL_MS = 10000;
+  const PART_MIN_POLLS = 180; // 30 minutes for each zip file, or longer at 500 KB a second
+  const PART_RATE = 500000;
+  const ONE_ZIP_POLLS = 90; // about 7 minutes for Google to prepare the zip of one item
+  const BATCH_ZIP_POLLS = 400; // about 33 minutes for a batch
 
   // The only internal requests this script sends. All of them read.
   const READ_ONLY_RPCS = {
@@ -111,12 +169,6 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
     dnv2s: 'read the state of a download token',
   };
 
-  const COMBOS = [
-    { method: 'item-url', cred: 'include' },
-    { method: 'item-url', cred: 'omit' },
-    { method: 'zip', cred: 'include' },
-    { method: 'zip', cred: 'omit' },
-  ];
   const KINDS = [['photo', 'Photos'], ['video', 'Videos'], ['live', 'Live Photos']];
   const VIDEO_EXT = /\.(mp4|m4v|mov|qt|3gp|3g2|avi|mkv|webm|mts|m2ts|mpg|mpeg|wmv|flv)$/i;
 
@@ -148,6 +200,22 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
     done: (n) => 'Done. All ' + fmtInt(n) + ' items are in the folder. Go back to Claude Code.',
     doneSomeFailed: (k, n) => 'Finished. ' + fmtInt(n - k) + ' of ' + fmtInt(n) + ' items are in the folder. ' +
       fmtInt(k) + ' did not download. Click Start to try them again. If they still fail, tell Claude Code.',
+    donePending: (done, n, waiting, failed) => 'Finished in this tab. ' + fmtInt(done) + ' of ' + fmtInt(n) +
+      ' items are in the folder. ' + (waiting ? 'The browser is still saving ' + fmtInt(waiting) +
+      ' of them as zip files in your Downloads folder. ' : 'The browser is still saving zip files in your Downloads folder. ') +
+      (failed ? fmtInt(failed) + ' did not download. ' : '') +
+      'When its download list shows them complete, go back to Claude Code. It moves them into the folder.',
+    allowDownloads: 'If the browser asks to download multiple files, click Allow.',
+    zipWait: (moved, sent) => 'Waiting for Claude Code to move the zip files from your Downloads folder into the folder. ' +
+      fmtInt(moved) + ' of ' + fmtInt(sent) + ' are moved. If the browser asks to download multiple files, click Allow.',
+    zipEnd: (moved, sent) => 'Almost done. The browser is saving the last zip files in your Downloads folder, and ' +
+      fmtInt(moved) + ' of ' + fmtInt(sent) + ' are moved into the folder. Keep this tab open. If the browser asks to ' +
+      'download multiple files, click Allow.',
+    framesBlocked: 'This page does not let the panel start downloads. Nothing was changed in Google Photos. Tell Claude ' +
+      'Code that the download failed. It can offer Google Takeout instead.',
+    zipsStalled: 'The zip files did not reach the folder in time. Nothing was changed in Google Photos. If the browser ' +
+      'asked to download multiple files, click Allow. Then go back to Claude Code. It moves the zip files from your ' +
+      'Downloads folder into the folder, and then you click Start to continue.',
     stopping: 'Stopping. Please wait.',
     stopped: 'Stopped. Click Start to continue. Files already saved stay in the folder.',
     listFailed: (why) => 'Google Photos did not answer the way this script expects (' + short(why, 80) +
@@ -157,8 +225,6 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
     signedOut: 'Google Photos says you are not signed in. Sign in in this tab, reload the page, paste the script again, and click Start. It continues where it stopped.',
     empty: 'The script found no photos or videos in this library. If your library is not empty, Google may have changed its page. Tell Claude Code.',
     offline: 'This page cannot reach Google right now. Check your internet connection, then click Start. It continues where it stopped.',
-    manyFailed: (why) => 'Many downloads failed in a row (' + short(why, 80) +
-      '). Check your internet connection. Then reload this page, paste the script again, and click Start. It continues where it stopped.',
     diskFull: 'The disk is full. Free some space, then click Start to continue.',
     lostFolder: 'The panel can no longer save in the folder. Click Start again, pick the folder and allow editing.',
     unexpected: (why) => 'Something went wrong (' + short(why, 80) + '). Nothing was changed in Google Photos. Click Start to try again. If it happens again, tell Claude Code.',
@@ -605,11 +671,21 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
       message: '',
       doneKeys: new Set(),
       failedItems: new Map(),
-      prefs: { photo: null, video: null, live: null },
-      otherStreak: { photo: 0, video: 0, live: 0 },
-      liveRule: null,
+      credPref: new Map(), // "host part" -> the credentials mode that worked
+      deadParts: new Map(), // "host part" -> items in a row that failed in both modes
+      methodPref: { photo: null, video: null, live: null },
+      zipFails: { photo: 0, video: 0, live: 0 },
+      kindFails: { photo: 0, video: 0, live: 0 },
+      inPage: { photo: true, video: true, live: true },
+      toDownloads: new Map(), // items for zip files in the Downloads folder
+      zipItems: new Map(),
+      sentParts: [],
+      frameBlocked: false,
+      polls: 0,
+      collectedAt: 0,
       liveSeen: { bytes: 0, n: 0 },
-      failsInARow: 0,
+      liveExact: 0,
+      liveBoth: 0,
       pauseUntil: 0,
       rateLevel: 0,
       doneBuf: [],
@@ -718,7 +794,15 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
     let s = 'Downloading. ' + fmtInt(st.done) + ' of ' + fmtInt(st.listed) + ' items.';
     if (st.bytesTotal) s += ' ' + fmtBytes(st.bytesDone) + ' of ' + fmtBytes(st.bytesTotal) + '.';
     if (st.failed) s += ' ' + fmtInt(st.failed) + ' did not download yet.';
+    if (st.sentParts.length) {
+      s += ' Zip files in your Downloads folder: ' + fmtInt(movedParts()) + ' of ' + fmtInt(st.sentParts.length) +
+        ' moved into the folder. ' + MSG.allowDownloads;
+    }
     return s;
+  }
+
+  function movedParts() {
+    return st.sentParts.filter((p) => p.collected).length;
   }
 
   // ------------------------------------------------------------------- files
@@ -883,6 +967,7 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
       failed: st.failed,
       bytesDone: st.bytesDone,
       bytesTotal: st.bytesTotal,
+      zipFiles: { sent: st.sentParts.length, moved: movedParts() },
       message: st.message,
       updated: nowIso(),
     }, null, 2) + '\n';
@@ -933,24 +1018,31 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
     if (st.doneBuf.length) await flushDone();
   }
 
-  function markDone(item, size, liveSize, writeLine) {
+  // liveSize null for a Live Photo: the photo was saved without its video part. liveError says
+  // why, when Google named a video part that did not download.
+  function markDone(item, size, liveSize, writeLine, liveError) {
     if (st.doneKeys.has(item.mediaKey)) return;
     st.doneKeys.add(item.mediaKey);
     st.failedItems.delete(item.mediaKey);
     st.done += 1;
     if (validSize(item.size)) st.bytesDone += item.size;
-    if (item.live && validSize(liveSize)) {
+    const withVideo = item.live && validSize(liveSize);
+    if (withVideo) {
       st.liveSeen.bytes += liveSize;
       st.liveSeen.n += 1;
+      if (size === item.size) st.liveExact += 1;
+      else if (size + liveSize === item.size) st.liveBoth += 1;
     }
     if (writeLine) {
-      queueDoneLine({
+      const line = {
         mediaKey: item.mediaKey,
         path: item.path,
         size: size,
-        livePath: item.live ? item.livePath : null,
-        liveSize: item.live ? liveSize : null,
-      });
+        livePath: withVideo ? item.livePath : null,
+        liveSize: withVideo ? liveSize : null,
+      };
+      if (item.live && !withVideo && liveError) line.liveError = sentence(liveError);
+      queueDoneLine(line);
     }
   }
 
@@ -963,8 +1055,14 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
     return parts.length >= 2 && parts[0] !== META_DIR && parts.every((x) => x && x !== '.' && x !== '..');
   }
 
+  // A line for a finished item: the photo or video, and the video part of a Live Photo or null.
+  function finishedRecord(rec) {
+    if (!rec || typeof rec.mediaKey !== 'string' || 'error' in rec || !validRel(rec.path) || !validSize(rec.size)) return false;
+    return rec.livePath == null || (validRel(rec.livePath) && validSize(rec.liveSize));
+  }
+
   async function readPrevious() {
-    const prev = { items: new Map(), done: new Map(), method: null };
+    const prev = { items: new Map(), done: new Map(), method: null, kinds: new Set() };
     let listText = null;
     try { listText = await readTextFile(st.hc, LIST_FILE); } catch (e) { listText = null; }
     if (listText) {
@@ -989,8 +1087,28 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
         try { rec = JSON.parse(line); } catch (e) { continue; }
         if (!rec || typeof rec.mediaKey !== 'string') continue;
         // The last line for an item counts, as in google_photos.py verify.
-        if (validRel(rec.path) && validSize(rec.size) && !('error' in rec)) prev.done.set(rec.mediaKey, rec);
+        if (finishedRecord(rec)) prev.done.set(rec.mediaKey, rec);
         else prev.done.delete(rec.mediaKey);
+      }
+    }
+    // The kinds of items that this page fetched itself in an earlier run in this folder.
+    prev.done.forEach((rec, key) => {
+      const old = prev.items.get(key);
+      if (old) prev.kinds.add(old.live === true ? 'live' : old.kind === 'video' ? 'video' : 'photo');
+    });
+    // Items that google_photos.py moved here from zip files in the Downloads folder. A line there
+    // counts unless google-done.jsonl has a line for the item that is as complete.
+    let collected = null;
+    try { collected = await readTextFile(st.hc, COLLECTED_FILE); } catch (e) { collected = null; }
+    if (collected) {
+      const end = collected.lastIndexOf('\n') + 1;
+      st.collectedAt = encoder.encode(collected.slice(0, end)).length;
+      for (const line of collected.slice(0, end).split('\n')) {
+        let rec;
+        try { rec = JSON.parse(line); } catch (e) { continue; }
+        if (!finishedRecord(rec)) continue;
+        const cur = prev.done.get(rec.mediaKey);
+        if (!cur || (cur.livePath == null && rec.livePath != null)) prev.done.set(rec.mediaKey, rec);
       }
     }
     return prev;
@@ -1118,15 +1236,19 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
       seenCount += chunk.length;
       say(MSG.info(seenCount, keys.length));
     }
-    const lacking = media.filter((m) => {
+    const isLacking = (m) => {
       const r = info.get(m.mediaKey);
       return !r || !nonEmpty(r.fileName) || !validSize(r.size);
-    });
-    if (lacking.length > Math.max(20, Math.ceil(media.length * 0.02))) {
-      throw apiErr(0, 'file names and sizes are missing for ' + fmtInt(lacking.length) + ' items');
-    }
+    };
+    const lacking = media.filter(isLacking);
+    // fDcn4b first, then the check. If its first 50 answers hold nothing either, the rest are
+    // left out, so a changed request does not cost one request per item.
+    let tried = 0;
+    let found = 0;
     await pool(lacking, WORKERS, async (m) => {
       checkStop();
+      if (tried >= 50 && found === 0) return;
+      tried += 1;
       let x = null;
       try {
         x = await api.getItemInfoExt(m.mediaKey, signal);
@@ -1136,13 +1258,20 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
       }
       if (!x) return;
       const r = info.get(m.mediaKey) || {};
-      info.set(m.mediaKey, {
+      const merged = {
         mediaKey: m.mediaKey,
         fileName: nonEmpty(r.fileName) || x.fileName,
         size: validSize(r.size) ? r.size : x.size,
         isOriginalQuality: typeof r.isOriginalQuality === 'boolean' ? r.isOriginalQuality : x.isOriginalQuality,
-      });
+      };
+      info.set(m.mediaKey, merged);
+      if (nonEmpty(merged.fileName) && validSize(merged.size)) found += 1;
+      if (tried % 100 === 0) say(MSG.info(keys.length - lacking.length + tried, keys.length));
     });
+    const missing = media.filter(isLacking).length;
+    if (missing > Math.max(20, Math.ceil(media.length * 0.02))) {
+      throw apiErr(0, 'file names and sizes are missing for ' + fmtInt(missing) + ' items');
+    }
     return info;
   }
 
@@ -1321,24 +1450,23 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
     }
   }
 
-  // A file counts when its size is the one Google reports. For a Live Photo, Google's size may
-  // be the photo alone or the photo and its video together: the first Live Photo that arrives
-  // decides. If it is neither, Live Photos count with the sizes that arrived.
-  function sizeOk(item, size, liveSize) {
-    if (!(size > 0)) return false;
-    if (item.live && !(liveSize > 0)) return false;
-    if (!validSize(item.size)) return true;
-    if (!item.live) return size === item.size;
-    const exact = size === item.size;
-    const both = size + liveSize === item.size;
-    if (st.liveRule === null) st.liveRule = exact ? 'exact' : both ? 'both' : 'loose';
-    if (st.liveRule === 'exact') return exact;
-    if (st.liveRule === 'both') return both || exact;
-    return true;
+  // A file counts when its size is Google's size for it. Google gives the size of a Live Photo
+  // for the photo alone or for the photo and its video together, so either counts. Without
+  // Google's size, and for a Live Photo's photo saved alone, every file must have matched the
+  // Content-Length of its download or its size in the zip: that is "checked".
+  function sizesOk(item, size, liveSize, checked) {
+    if (!(size > 0) || (liveSize !== null && !(liveSize > 0))) return false;
+    if (!validSize(item.size)) return !!checked;
+    if (size === item.size) return true;
+    if (!item.live) return false;
+    if (liveSize !== null) return size + liveSize === item.size;
+    return !!checked;
   }
 
   // Items finished in an earlier run are skipped when their files are on disk with the
-  // recorded sizes. A file without a done line counts when its size is Google's size.
+  // recorded sizes. A file without a done line counts when its size is Google's size. A Live
+  // Photo saved without its video part counts, unless its video part failed to download: then
+  // this run tries the item again.
   async function checkExisting(items, prev) {
     const todo = [];
     const keep = [];
@@ -1348,11 +1476,15 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
       if (n % 200 === 0) say(MSG.checking(n, items.length));
       const d = prev.done.get(it.mediaKey);
       let ok = false;
-      if (d && d.path === it.path && (!it.live || (d.livePath === it.livePath && validSize(d.liveSize)))) {
-        ok = (await fileSize(it.path)) === d.size &&
-          (!it.live || (await fileSize(it.livePath)) === d.liveSize) &&
-          sizeOk(it, d.size, it.live ? d.liveSize : null);
-        if (ok) markDone(it, d.size, it.live ? d.liveSize : null, false);
+      if (d && d.path === it.path) {
+        const alone = d.livePath == null;
+        if (alone && !(it.live && d.liveError)) {
+          ok = (await fileSize(it.path)) === d.size && sizesOk(it, d.size, null, true);
+        } else if (!alone && it.live && d.livePath === it.livePath) {
+          ok = (await fileSize(it.path)) === d.size && (await fileSize(it.livePath)) === d.liveSize &&
+            sizesOk(it, d.size, d.liveSize, true);
+        }
+        if (ok) markDone(it, d.size, alone ? null : d.liveSize, false);
       } else if (!d && !it.kept && !it.live && validSize(it.size) && it.size > 0 && prev.items.has(it.mediaKey)) {
         ok = (await fileSize(it.path)) === it.size;
         if (ok) markDone(it, it.size, null, true);
@@ -1371,8 +1503,9 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
       mediaKey: it.mediaKey,
       takenTime: it.takenTime,
       fileName: it.fileName,
-      // A Live Photo's size goes into the list only when it is the photo's own size.
-      size: it.live && st.liveRule !== 'exact' ? null : it.size,
+      // Google's size of a Live Photo may hold its video part too, so verify reads the size of
+      // each of its files from google-done.jsonl instead.
+      size: it.live ? null : it.size,
       kind: it.kind,
       live: it.live,
       originalQuality: it.originalQuality,
@@ -1428,6 +1561,14 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
     return h === 'photos.google.com' || /\.(google|googleusercontent|googlevideo)\.com$/.test(h);
   }
 
+  function hostOf(u) {
+    try {
+      return new URL(u).hostname.toLowerCase();
+    } catch (e) {
+      return '';
+    }
+  }
+
   async function fetchMedia(url, cred, signal) {
     if (!allowedMediaUrl(url)) throw itemErr('url', 'Google gave an address this script does not use');
     let resp;
@@ -1444,6 +1585,7 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
         throw itemErr('busy', 'Google asked to slow down', true);
       }
       if (resp.status >= 500) throw itemErr('server', 'Google answered ' + resp.status, true);
+      if (resp.status === 401 || resp.status === 403) throw itemErr('auth', 'Google answered ' + resp.status);
       throw itemErr('http', 'Google answered ' + resp.status);
     }
     const type = (resp.headers.get('content-type') || '').toLowerCase();
@@ -1455,7 +1597,7 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
   }
 
   // Retries one fetch. A fetch that the browser blocks looks like a network error, so it is
-  // retried more only with a method that already worked for this kind of item.
+  // retried more only with a credentials mode that already worked for this host.
   async function withRetries(fn, known, signal) {
     for (let attempt = 1; ; attempt++) {
       await waitForPause(signal);
@@ -1471,20 +1613,89 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
     }
   }
 
-  async function fetchToPath(url, cred, rel, signal) {
-    const resp = await fetchMedia(url, cred, signal);
-    const body = resp.body || (await resp.blob()).stream();
-    return writeStream(rel, body, signal);
+  // gpb DESIGN.md lines 1690 to 1703: photos.fife.usercontent.google.com needs the Google
+  // session, and video-downloads.googleusercontent.com does not take it.
+  function firstCred(host) {
+    return host === 'video-downloads.googleusercontent.com' ? 'omit' : 'include';
   }
 
-  function infoError(e) {
+  // Runs one fetch with the credentials mode of its host and part, and with the other mode after
+  // a blocked fetch or a 401 or 403 answer. The mode that works is kept for the run. A host and
+  // part that failed in both modes for DEAD_AFTER items in a row is not tried again in this run.
+  async function withModes(url, part, run, signal) {
+    const host = hostOf(url);
+    const key = host + ' ' + part;
+    if ((st.deadParts.get(key) || 0) >= DEAD_AFTER) throw itemErr('blocked', 'this page cannot fetch these files');
+    const first = st.credPref.get(key) || firstCred(host);
+    let last = null;
+    for (const cred of [first, first === 'include' ? 'omit' : 'include']) {
+      try {
+        const out = await withRetries(() => run(cred), st.credPref.get(key) === cred, signal);
+        st.credPref.set(key, cred);
+        st.deadParts.set(key, 0);
+        return out;
+      } catch (e) {
+        if (isAbort(e) || st.stopping) throw stopErr();
+        if (!e || e.hc !== 'item' || (e.code !== 'network' && e.code !== 'auth')) throw e;
+        last = e;
+      }
+    }
+    st.deadParts.set(key, (st.deadParts.get(key) || 0) + 1);
+    throw last;
+  }
+
+  function contentLength(resp) {
+    const v = resp.headers ? resp.headers.get('content-length') : null;
+    if (typeof v !== 'string' || !/^\s*\d+\s*$/.test(v)) return null;
+    const n = Number(v);
+    return Number.isSafeInteger(n) ? n : null;
+  }
+
+  // Saves one download in DIR/rel. A download that ends before its Content-Length is retried.
+  async function fetchToPath(url, cred, rel, signal) {
+    const resp = await fetchMedia(url, cred, signal);
+    const length = contentLength(resp);
+    const body = resp.body || (await resp.blob()).stream();
+    const size = await writeStream(rel, body, signal);
+    if (length !== null && size < length) {
+      await removeFile(rel);
+      throw itemErr('short', 'the download ended after ' + fmtInt(size) + ' of ' + fmtInt(length) + ' bytes', true);
+    }
+    // More bytes than the Content-Length means a compressed transfer, which says nothing about the size.
+    return { size: size, checked: length !== null && size === length };
+  }
+
+  function fetchToFile(url, part, rel, signal) {
+    return withModes(url, part, (cred) => fetchToPath(url, cred, rel, signal), signal);
+  }
+
+  async function fetchBlob(url, cred, signal) {
+    const resp = await fetchMedia(url, cred, signal);
+    try {
+      return await resp.blob();
+    } catch (e) {
+      if (isAbort(e) || st.stopping) throw stopErr();
+      throw itemErr('network', 'the download broke off', true);
+    }
+  }
+
+  function infoError(e, what) {
     if (isAbort(e) || st.stopping) return stopErr();
     if (isSignedOut(e)) return runFail(MSG.signedOut);
     if (e && e.hc === 'fail') return e;
-    return itemErr('info', 'the item info request failed: ' + errText(e));
+    const out = itemErr('info', (what || 'the item info request') + ' failed: ' + errText(e));
+    out.network = !!(e && e.network);
+    return out;
   }
 
-  async function viaItemUrl(item, cred, ctx, known, signal) {
+  // What one method brought: the sizes, whether each matched its own length, the files it wrote,
+  // whether Google named a video part for a Live Photo, and why that video part failed.
+  function result(size, checked) {
+    return { size: size, checked: checked, liveSize: null, liveChecked: false, wroteMain: false, wroteLive: false,
+      liveUrl: false, liveError: null };
+  }
+
+  async function viaItemUrl(item, ctx, signal) {
     if (!ctx.info) {
       try {
         ctx.info = await api.getItemInfo(item.mediaKey, signal);
@@ -1494,17 +1705,32 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
       if (!ctx.info) throw itemErr('info', 'Google gave no details for this item');
     }
     const info = ctx.info;
-    const mainUrl = nonEmpty(info.downloadOriginalUrl) || nonEmpty(info.downloadUrl);
-    if (!mainUrl) throw itemErr('url', 'Google gave no download address for this item');
-    let liveUrl = null;
-    if (item.live) {
-      liveUrl = nonEmpty(info.livePhotoVideoDownloadUrl);
-      if (!liveUrl) throw itemErr('url', 'Google gave no address for the video part of this Live Photo');
+    let r;
+    if (ctx.still) {
+      r = result(ctx.still.size, ctx.still.checked);
+    } else {
+      // [1] is the signed original, [7] only a stand-in when [1] is empty (see the top of this file).
+      const mainUrl = nonEmpty(info.downloadUrl) || nonEmpty(info.downloadOriginalUrl);
+      if (!mainUrl) throw itemErr('url', 'Google gave no download address for this item');
+      const got = await fetchToFile(mainUrl, item.kind === 'video' ? 'video' : 'photo', item.path, signal);
+      r = result(got.size, got.checked);
+      r.wroteMain = true;
     }
-    const size = await withRetries(() => fetchToPath(mainUrl, cred, item.path, signal), known, signal);
-    let liveSize = null;
-    if (liveUrl) liveSize = await withRetries(() => fetchToPath(liveUrl, cred, item.livePath, signal), known, signal);
-    return { size: size, liveSize: liveSize };
+    if (!item.live) return r;
+    const liveUrl = nonEmpty(info.livePhotoVideoDownloadUrl);
+    r.liveUrl = !!liveUrl;
+    if (!liveUrl) return r;
+    try {
+      const got = await fetchToFile(liveUrl, 'video', item.livePath, signal);
+      r.liveSize = got.size;
+      r.liveChecked = got.checked;
+      r.wroteLive = true;
+    } catch (e) {
+      if (isAbort(e) || st.stopping) throw stopErr();
+      if (e && e.hc === 'fail') throw e;
+      r.liveError = errText(e);
+    }
+    return r;
   }
 
   // Every zip file of a ready download token. GPTK parser.ts lines 333 to 340 read the first one.
@@ -1519,16 +1745,40 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
     return out;
   }
 
+  // yCLA7, then dnv2s until Google has prepared the zip files (GPTK src/api/api.ts lines 476 to 503).
+  async function prepareZip(keys, polls, signal) {
+    let token;
+    try {
+      token = await api.getDownloadToken(keys, signal);
+    } catch (e) {
+      throw infoError(e, 'the download request');
+    }
+    if (Array.isArray(token)) token = token[0];
+    if (!nonEmpty(token)) throw itemErr('zip', 'Google gave no download token');
+    for (let i = 0; i < polls; i++) {
+      if (i) await sleep(Math.min(5000, 500 * (i + 1)), signal);
+      let raw;
+      try {
+        raw = await api.checkDownloadToken(token, signal);
+      } catch (e) {
+        throw infoError(e, 'the download request');
+      }
+      const parts = zipParts(raw);
+      if (parts.length) return parts;
+    }
+    throw itemErr('zip', 'Google did not prepare the download in time', true);
+  }
+
   function u64(dv, off) {
     return dv.getUint32(off, true) + dv.getUint32(off + 4, true) * 4294967296;
   }
 
   // The entries of a zip from its central directory (ZIP64 too), or the file itself when
   // Google sent a plain file.
-  async function zipEntries(blob, partName) {
+  async function zipEntries(blob, partName, partSize) {
     const head = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
     if (!(head.length === 4 && head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04)) {
-      return [{ name: partName || 'file', plain: true, blob: blob, size: blob.size }];
+      return [{ name: partName || 'file', plain: true, blob: blob, size: blob.size, known: validSize(partSize) }];
     }
     const bad = () => itemErr('zip', 'the zip from Google could not be read');
     const tailStart = Math.max(0, blob.size - (65535 + 22));
@@ -1611,137 +1861,149 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
     return { main: bySize(others) || bySize(entries) || others[0] || entries[0] || null, live: null };
   }
 
+  // A file from a zip counts as checked when it has the size that the zip lists for it, and a
+  // plain file when it has the size that dnv2s gave.
   async function writeEntry(entry, rel, signal) {
     const size = await writeStream(rel, await entryStream(entry), signal);
     if (!entry.plain && size !== entry.size) {
       await removeFile(rel);
       throw itemErr('zip', 'a file in the zip from Google was incomplete');
     }
-    return size;
+    return { size: size, checked: entry.plain ? entry.known : true };
   }
 
-  async function viaZip(item, cred, known, signal) {
-    let token;
-    try {
-      token = await api.getDownloadToken([item.mediaKey], signal);
-    } catch (e) {
-      throw infoError(e);
-    }
-    if (Array.isArray(token)) token = token[0];
-    if (!nonEmpty(token)) throw itemErr('zip', 'Google gave no download token');
-    let parts = [];
-    for (let i = 0; i < 90 && parts.length === 0; i++) {
-      if (i) await sleep(Math.min(5000, 500 * (i + 1)), signal);
-      let raw;
-      try {
-        raw = await api.checkDownloadToken(token, signal);
-      } catch (e) {
-        throw infoError(e);
-      }
-      parts = zipParts(raw);
-    }
-    if (!parts.length) throw itemErr('zip', 'Google did not prepare the download in time', true);
+  async function viaZip(item, ctx, signal) {
+    const parts = await prepareZip([item.mediaKey], ONE_ZIP_POLLS, signal);
     const entries = [];
     for (const part of parts) {
-      const resp = await withRetries(() => fetchMedia(part.url, cred, signal), known, signal);
-      let blob;
-      try {
-        blob = await resp.blob();
-      } catch (e) {
-        if (isAbort(e) || st.stopping) throw stopErr();
-        throw itemErr('network', 'the download broke off', true);
-      }
+      const blob = await withModes(part.url, 'zip', (cred) => fetchBlob(part.url, cred, signal), signal);
       if (validSize(part.size) && blob.size !== part.size) throw itemErr('zip', 'the zip from Google was incomplete');
-      entries.push(...(await zipEntries(blob, part.name)));
+      for (const e of await zipEntries(blob, part.name, part.size)) entries.push(e);
     }
     const pick = pickEntries(entries, item);
-    if (!pick.main) throw itemErr('zip', 'the zip from Google did not hold the file');
-    if (item.live && !pick.live) throw itemErr('zip', 'the zip from Google did not hold the video part of this Live Photo');
-    const size = await writeEntry(pick.main, item.path, signal);
-    const liveSize = item.live ? await writeEntry(pick.live, item.livePath, signal) : null;
-    return { size: size, liveSize: liveSize };
-  }
-
-  // A method that keeps failing for a kind of item while another one works gives way to it.
-  function learn(kind, idx) {
-    if (st.prefs[kind] === null) {
-      st.prefs[kind] = idx;
-    } else if (st.prefs[kind] === idx) {
-      st.otherStreak[kind] = 0;
-    } else if (++st.otherStreak[kind] >= 3) {
-      st.prefs[kind] = idx;
-      st.otherStreak[kind] = 0;
+    let r;
+    if (ctx.still) {
+      // The photo is saved already; only its video part is missing.
+      if (!pick.live) throw itemErr('zip', 'the zip from Google did not hold the video part of this Live Photo');
+      r = result(ctx.still.size, ctx.still.checked);
+    } else {
+      if (!pick.main) throw itemErr('zip', 'the zip from Google did not hold the file');
+      const got = await writeEntry(pick.main, item.path, signal);
+      r = result(got.size, got.checked);
+      r.wroteMain = true;
     }
+    if (!item.live || !pick.live) return r;
+    r.liveUrl = true;
+    try {
+      const got = await writeEntry(pick.live, item.livePath, signal);
+      r.liveSize = got.size;
+      r.liveChecked = got.checked;
+      r.wroteLive = true;
+    } catch (e) {
+      if (isAbort(e) || st.stopping) throw stopErr();
+      if (e && e.hc === 'fail') throw e;
+      r.liveError = errText(e);
+    }
+    return r;
   }
 
+  // The methods in the order that worked last for this kind of item. When the video part of a
+  // Live Photo fails, its photo is kept and the other method may still bring the video part. If
+  // none does, the photo counts alone, with the reason for its line in google-done.jsonl.
   async function downloadItem(item, signal) {
     const kind = kindOf(item);
-    const pref = st.prefs[kind];
-    const order = pref === null ? [0, 1, 2, 3] : [pref].concat([0, 1, 2, 3].filter((i) => i !== pref));
-    const ctx = { info: null };
-    const skip = new Set();
+    const order = st.methodPref[kind] === 'zip' ? ['zip', 'item-url'] : ['item-url', 'zip'];
+    const ctx = { info: null, still: null, liveUrl: false };
     let last = null;
-    for (const idx of order) {
-      const combo = COMBOS[idx];
-      if (skip.has(combo.method)) continue;
+    let sizeOnly = false; // an earlier method failed only because its size could not be checked
+    for (const method of order) {
+      if (method === 'zip' && st.zipFails[kind] >= DEAD_AFTER) continue;
       checkStop();
+      let r;
       try {
-        const r = combo.method === 'item-url'
-          ? await viaItemUrl(item, combo.cred, ctx, pref === idx, signal)
-          : await viaZip(item, combo.cred, pref === idx, signal);
-        if (!sizeOk(item, r.size, r.liveSize)) {
-          await removeFile(item.path);
-          if (item.live) await removeFile(item.livePath);
-          throw itemErr('size', 'the file size did not match: Google reports ' + fmtInt(item.size) + ' bytes, ' +
-            fmtInt(r.size) + ' arrived');
-        }
-        learn(kind, idx);
-        return r;
+        r = method === 'item-url' ? await viaItemUrl(item, ctx, signal) : await viaZip(item, ctx, signal);
+        if (method === 'zip') st.zipFails[kind] = 0;
       } catch (e) {
         if (isAbort(e) || st.stopping) throw stopErr();
         if (e && e.hc === 'fail') throw e;
+        if (method === 'zip') st.zipFails[kind] += 1;
         last = e;
-        // Google answered, so the other credentials mode of the same method would not help.
-        if (!(e && e.code === 'network')) skip.add(combo.method);
+        continue;
       }
+      if (r.liveUrl) ctx.liveUrl = true;
+      if (!sizesOk(item, r.size, r.liveSize, r.checked && (r.liveSize === null || r.liveChecked))) {
+        if (r.wroteMain) await removeFile(item.path);
+        if (r.wroteLive) await removeFile(item.livePath);
+        last = itemErr('size', validSize(item.size)
+          ? 'the size did not match: Google reports ' + fmtInt(item.size) + ' bytes, ' +
+            fmtInt(r.size + (r.liveSize || 0)) + ' arrived'
+          : 'the size of the file could not be checked');
+        sizeOnly = !validSize(item.size);
+        continue;
+      }
+      if (item.live && r.liveSize === null) {
+        if (!ctx.still) ctx.still = r;
+        if (r.liveError) last = itemErr('live', r.liveError);
+        if (method === 'item-url' && !r.liveUrl) break; // Google names no video part for it
+        continue;
+      }
+      // One item without a size to check does not change the method for the rest.
+      if (!sizeOnly) st.methodPref[kind] = method;
+      return r;
+    }
+    if (ctx.still) {
+      const out = Object.assign({}, ctx.still);
+      out.liveError = ctx.liveUrl ? errText(last || 'the video part did not download') : null;
+      return out;
     }
     throw last || itemErr('none', 'no download method worked');
   }
 
   function methodText() {
-    const byCombo = new Map();
+    const byLabel = new Map();
     for (const pair of KINDS) {
-      const idx = st.prefs[pair[0]];
-      if (idx === null) continue;
-      if (!byCombo.has(idx)) byCombo.set(idx, []);
-      byCombo.get(idx).push(pair[1].toLowerCase());
+      const label = !st.inPage[pair[0]] ? 'zip files in Downloads' : st.methodPref[pair[0]];
+      if (!label) continue;
+      if (!byLabel.has(label)) byLabel.set(label, []);
+      byLabel.get(label).push(pair[1].toLowerCase());
     }
-    const text = (idx) => COMBOS[idx].method + ', credentials ' + COMBOS[idx].cred;
-    if (byCombo.size === 0) return 'none';
-    if (byCombo.size === 1) return text(byCombo.keys().next().value);
-    return Array.from(byCombo.entries()).map((e) => text(e[0]) + ' (' + e[1].join(', ') + ')').join('; ');
+    if (byLabel.size === 0) return 'none';
+    if (byLabel.size === 1) return byLabel.keys().next().value;
+    return Array.from(byLabel.entries()).map((e) => e[0] + ' (' + e[1].join(', ') + ')').join('; ');
   }
 
-  // The first item of each kind (photo, video, Live Photo) shows whether downloads work. If one
-  // fails, the second of that kind gets a chance before the run stops.
-  async function probe(queue, signal) {
+  function finishItem(item, r) {
+    markDone(item, r.size, r.liveSize, true, r.liveError);
+    // A video part that failed here may still come in a zip file in the Downloads folder.
+    if (r.liveError) st.toDownloads.set(item.mediaKey, item);
+  }
+
+  // An item for the zip files in the Downloads folder no longer counts as failed.
+  function sendToDownloads(item) {
+    st.failedItems.delete(item.mediaKey);
+    st.toDownloads.set(item.mediaKey, item);
+  }
+
+  // The first two items of each kind (photo, video, Live Photo) show whether this page can fetch
+  // that kind. A kind that it cannot fetch goes to the Downloads folder as zip files, unless this
+  // page fetched that kind in an earlier run in this folder: then each item gets its own chance.
+  async function probe(queue, prev, signal) {
     const finished = new Set();
     for (const pair of KINDS) {
+      const kind = pair[0];
       const candidates = [];
       for (const it of queue) {
-        if (kindOf(it) === pair[0]) candidates.push(it);
+        if (kindOf(it) === kind) candidates.push(it);
         if (candidates.length === 2) break;
       }
       if (!candidates.length) continue;
-      let ok = false;
       let last = null;
       for (const it of candidates) {
         checkStop();
         try {
-          const r = await downloadItem(it, signal);
-          markDone(it, r.size, r.liveSize, true);
+          finishItem(it, await downloadItem(it, signal));
           finished.add(it);
-          ok = true;
+          last = null;
           break;
         } catch (e) {
           if (isAbort(e) || st.stopping) throw stopErr();
@@ -1749,7 +2011,11 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
           last = e;
         }
       }
-      if (!ok) throw runFail(MSG.downloadFailed(pair[1], errText(last)));
+      if (last && !prev.kinds.has(kind)) {
+        st.inPage[kind] = false;
+        console.warn('Homecloud: ' + pair[1] + ' did not download in this page (' + errText(last) +
+          '). They go to the Downloads folder as zip files.');
+      }
       say(downloadingText());
     }
     return finished;
@@ -1762,27 +2028,36 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
     if (st.controller) st.controller.abort();
   }
 
-  async function downloadAll(queue, signal, lastPass) {
+  // Downloads in this page, 3 at a time, and returns the items that failed. A kind of item that
+  // fails MAX_FAILS_IN_A_ROW times in a row goes to the Downloads folder from then on.
+  async function downloadAll(queue, signal) {
     let next = 0;
-    st.failsInARow = 0;
+    const failed = [];
     const worker = async () => {
       while (!st.stopping && next < queue.length) {
         const item = queue[next++];
+        const kind = kindOf(item);
+        if (!st.inPage[kind]) {
+          sendToDownloads(item);
+          continue;
+        }
         try {
-          const r = await downloadItem(item, signal);
-          markDone(item, r.size, r.liveSize, true);
-          st.failsInARow = 0;
+          finishItem(item, await downloadItem(item, signal));
+          st.kindFails[kind] = 0;
         } catch (e) {
           if (st.halt || isAbort(e) || st.stopping) break;
           if (e && e.hc === 'fail') {
             haltRun(e.userMessage);
             break;
           }
-          st.failedItems.set(item.mediaKey, sentence(errText(e)));
-          st.failsInARow += 1;
-          if (!lastPass && st.failsInARow >= MAX_FAILS_IN_A_ROW) {
-            haltRun(MSG.manyFailed(errText(e)));
-            break;
+          if (e && e.code === 'blocked') {
+            // This page cannot fetch from the host of this item, so it goes to the Downloads folder.
+            sendToDownloads(item);
+          } else {
+            st.failedItems.set(item.mediaKey, sentence(errText(e)));
+            failed.push(item);
+            st.kindFails[kind] += 1;
+            if (st.kindFails[kind] >= MAX_FAILS_IN_A_ROW) st.inPage[kind] = false;
           }
         }
         st.failed = st.failedItems.size;
@@ -1796,6 +2071,231 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
     st.failed = st.failedItems.size;
     if (st.halt) throw runFail(st.halt);
     if (st.stopping) throw stopErr();
+    return failed;
+  }
+
+  // ------------------------------------------- zip files in the Downloads folder
+
+  function stemKey(name) {
+    return fold(splitName(String(name)).stem);
+  }
+
+  // At most a tenth of the free space that Claude Code measured, and 4 GB at most, waits in the
+  // Downloads folder at a time. One batch may always go.
+  function windowBytes() {
+    const free = CONFIG.freeBytes;
+    const tenth = typeof free === 'number' && isFinite(free) && free > 0 ? Math.floor(free / 10) : WINDOW_BYTES;
+    return Math.max(1, Math.min(WINDOW_BYTES, tenth));
+  }
+
+  // Batches in the order of the list. No two items in a batch share a name without its
+  // extension, so each file in a zip belongs to one item, and a video part to its photo.
+  function makeBatches(items) {
+    const limit = Math.min(BATCH_BYTES, windowBytes());
+    const batches = [];
+    let rest = items;
+    while (rest.length) {
+      const take = [];
+      let later = [];
+      const stems = new Set();
+      let bytes = 0;
+      for (let i = 0; i < rest.length; i++) {
+        if (take.length >= BATCH_ITEMS || (take.length && bytes >= limit)) {
+          later = later.concat(rest.slice(i));
+          break;
+        }
+        const it = rest[i];
+        const stem = stemKey(it.fileName);
+        const b = validSize(it.size) ? it.size : 0;
+        if (stems.has(stem) || (take.length && bytes + b > limit)) {
+          later.push(it);
+          continue;
+        }
+        take.push(it);
+        stems.add(stem);
+        bytes += b;
+      }
+      batches.push({ items: take, bytes: bytes });
+      rest = later;
+    }
+    return batches;
+  }
+
+  function whatOf(items) {
+    const labels = KINDS.filter((p) => items.some((it) => kindOf(it) === p[0])).map((p) => p[1]);
+    return labels.length === 1 ? labels[0] : 'Your photos and videos';
+  }
+
+  // One file per batch in DIR/.homecloud/google-batches: the zip files and the items in them,
+  // written before the browser saves anything. It holds no download address.
+  async function writeBatch(id, parts, items, signal) {
+    const text = JSON.stringify({
+      format: 'homecloud-google-batch',
+      version: 1,
+      batch: id,
+      created: nowIso(),
+      zips: parts.map((p) => ({ name: p.name, size: validSize(p.size) ? p.size : null })),
+      items: items.map((it) => ({
+        mediaKey: it.mediaKey,
+        fileName: it.fileName,
+        size: validSize(it.size) ? it.size : null,
+        kind: it.kind,
+        live: it.live,
+        path: it.path,
+        livePath: it.live ? it.livePath : null,
+      })),
+    }) + '\n';
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const dir = await st.hc.getDirectoryHandle(BATCHES_DIR, { create: true });
+        await writeTextFile(dir, id + '.json', text);
+        return;
+      } catch (e) {
+        const err = writeError(e);
+        if (err.hc !== 'item') throw err;
+        if (attempt >= 3) throw runFail(MSG.unexpected(errText(e)));
+        await sleep(1000 * attempt, signal);
+      }
+    }
+  }
+
+  // The bytes of the zip files that are not in the folder yet.
+  function waitingBytes() {
+    return st.sentParts.reduce((sum, p) => sum + (p.collected ? 0 : p.size), 0);
+  }
+
+  // A hidden frame opens the zip address. Google answers with a file, so the browser saves it in
+  // its Downloads folder, and this page stays as it is. Each zip file gets 30 minutes, or more
+  // when the zip files before it are big, before the run stops waiting for it.
+  function sendPart(id, index, part) {
+    const frame = document.createElement('iframe');
+    frame.style.display = 'none';
+    frame.setAttribute('aria-hidden', 'true');
+    frame.setAttribute('tabindex', '-1');
+    frame.src = part.url;
+    (document.body || document.documentElement).appendChild(frame);
+    const size = validSize(part.size) ? part.size : 0;
+    const ahead = waitingBytes() + size;
+    st.sentParts.push({
+      batch: id,
+      part: index,
+      size: size,
+      frame: frame,
+      collected: false,
+      until: st.polls + Math.max(PART_MIN_POLLS, Math.ceil(ahead / PART_RATE / (POLL_MS / 1000))),
+    });
+  }
+
+  // google_photos.py status and verify add a line to google-collected.jsonl for each item they
+  // move into the folder, and one for each zip file they finish. Only new lines are read.
+  async function readCollected() {
+    let file;
+    try {
+      file = await (await st.hc.getFileHandle(COLLECTED_FILE)).getFile();
+    } catch (e) {
+      return;
+    }
+    if (file.size <= st.collectedAt) return;
+    let text;
+    try {
+      text = await file.slice(st.collectedAt).text();
+    } catch (e) {
+      return; // changed while it was read; the next look reads it
+    }
+    const end = text.lastIndexOf('\n') + 1;
+    if (!end) return;
+    st.collectedAt += encoder.encode(text.slice(0, end)).length;
+    for (const line of text.slice(0, end).split('\n')) {
+      let rec;
+      try { rec = JSON.parse(line); } catch (e) { continue; }
+      if (!rec || typeof rec !== 'object') continue;
+      if (typeof rec.batch === 'string' && Number.isInteger(rec.part)) {
+        for (const p of st.sentParts) {
+          if (p.batch !== rec.batch || p.part !== rec.part || p.collected) continue;
+          p.collected = true;
+          if (p.frame) p.frame.remove();
+          p.frame = null;
+        }
+      } else if (finishedRecord(rec)) {
+        const it = st.zipItems.get(rec.mediaKey);
+        if (it && rec.path === it.path) markDone(it, rec.size, rec.livePath == null ? null : rec.liveSize, false);
+      }
+    }
+  }
+
+  // Waits until the zip files that are not in the folder yet leave room for the next batch, or,
+  // at the end, until all of them are in the folder. Without room, and with every zip file past
+  // its time, the run stops: the zip files wait in the Downloads folder, or did not arrive.
+  async function waitForRoom(bytes, final, signal) {
+    for (;;) {
+      await readCollected();
+      if (st.frameBlocked) throw runFail(MSG.framesBlocked);
+      const open = st.sentParts.filter((p) => !p.collected);
+      if (!open.length) return;
+      const late = open.every((p) => st.polls >= p.until);
+      if (final ? late : waitingBytes() + bytes <= windowBytes()) return;
+      if (late) throw runFail(MSG.zipsStalled);
+      say(final ? MSG.zipEnd(movedParts(), st.sentParts.length) : MSG.zipWait(movedParts(), st.sentParts.length));
+      await sleep(POLL_MS, signal);
+      st.polls += 1;
+    }
+  }
+
+  // The page's Content Security Policy may forbid these frames. Then no zip file arrives, and the
+  // run says so.
+  function onPolicyViolation(ev) {
+    if (!st.running || !st.sentParts.length || !ev || ev.disposition === 'report') return;
+    const d = String(ev.effectiveDirective || ev.violatedDirective || '');
+    if (/^(frame-src|child-src|default-src)/.test(d) && allowedMediaUrl(String(ev.blockedURI || ''))) {
+      st.frameBlocked = true;
+    }
+  }
+
+  // The items that this page could not fetch, in zip files that the browser saves in its
+  // Downloads folder. The first batch shows whether Google prepares them at all.
+  async function viaDownloads(items, signal) {
+    for (const it of items) st.zipItems.set(it.mediaKey, it);
+    const batches = makeBatches(items);
+    const stamp = nowIso().replace(/[-:]/g, '').replace(/\..*$/, '');
+    let first = true;
+    for (let b = 0; b < batches.length; b++) {
+      checkStop();
+      const batch = batches[b];
+      await waitForRoom(batch.bytes, false, signal);
+      let parts;
+      try {
+        parts = await prepareZip(batch.items.map((it) => it.mediaKey), BATCH_ZIP_POLLS, signal);
+        if (!parts.every((p) => allowedMediaUrl(p.url))) throw itemErr('url', 'Google gave an address this script does not use');
+      } catch (e) {
+        if (isAbort(e) || st.stopping) throw stopErr();
+        if (e && e.hc === 'fail') throw e;
+        if (e && e.network) throw runFail(MSG.offline);
+        if (first) throw runFail(MSG.downloadFailed(whatOf(batch.items), errText(e)));
+        for (const it of batch.items) {
+          if (!st.doneKeys.has(it.mediaKey)) st.failedItems.set(it.mediaKey, sentence(errText(e)));
+        }
+        st.failed = st.failedItems.size;
+        continue;
+      }
+      first = false;
+      const id = stamp + '-' + String(b + 1).padStart(4, '0');
+      await writeBatch(id, parts, batch.items, signal);
+      parts.forEach((part, i) => sendPart(id, i, part));
+      await say(downloadingText(), true);
+    }
+    await waitForRoom(0, true, signal);
+  }
+
+  function finalMessage() {
+    const notDone = st.listed - st.done;
+    if (st.sentParts.some((p) => !p.collected)) {
+      let waiting = 0;
+      st.toDownloads.forEach((it, key) => {
+        if (!st.doneKeys.has(key) && !st.failedItems.has(key)) waiting += 1;
+      });
+      return MSG.donePending(st.done, st.listed, waiting, notDone - waiting);
+    }
+    return notDone ? MSG.doneSomeFailed(notDone, st.listed) : MSG.done(st.listed);
   }
 
   // ------------------------------------------------------------ keep awake
@@ -1887,11 +2387,12 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
       let method = prev.method || 'none';
       if (queue.length) {
         await say(MSG.firstFiles, true);
-        const probed = await probe(queue, signal);
+        const probed = await probe(queue, prev, signal);
         queue = queue.filter((it) => !probed.has(it));
         method = methodText();
+        // Google's size of a Live Photo holds its video part, or the space check adds a guess.
         const lives = todo.filter((it) => it.live).length;
-        if (lives && st.liveRule !== 'both') {
+        if (lives && !(st.liveBoth > 0 && st.liveExact === 0)) {
           const each = st.liveSeen.n ? Math.ceil(st.liveSeen.bytes / st.liveSeen.n) : LIVE_GUESS_BYTES;
           checkSpace(need + lives * each, false);
         }
@@ -1899,11 +2400,19 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
       await writeList(items, albums, method);
       listWritten = true;
       await say(downloadingText(), true);
-      await downloadAll(queue, signal, false);
-      const again = queue.filter((it) => st.failedItems.has(it.mediaKey));
-      if (again.length) await downloadAll(again, signal, true);
+      const failed = await downloadAll(queue, signal);
+      const again = failed.length ? await downloadAll(failed, signal) : [];
+      // What this page could not fetch gets one more chance as zip files in the Downloads folder.
+      for (const it of again) {
+        if (!st.doneKeys.has(it.mediaKey)) sendToDownloads(it);
+      }
+      st.failed = st.failedItems.size;
+      if (st.toDownloads.size) {
+        await say(downloadingText(), true);
+        await viaDownloads(Array.from(st.toDownloads.values()), signal);
+      }
       st.state = 'done';
-      st.message = st.failed ? MSG.doneSomeFailed(st.failed, st.listed) : MSG.done(st.listed);
+      st.message = finalMessage();
     } catch (e) {
       if (st.halt) {
         st.state = 'failed';
@@ -2021,6 +2530,7 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
     close() {
       if (st.running) return;
       document.removeEventListener('visibilitychange', onVisibility);
+      document.removeEventListener('securitypolicyviolation', onPolicyViolation);
       w.removeEventListener('beforeunload', onBeforeUnload);
       if (ui.box) ui.box.remove();
     },
@@ -2028,6 +2538,7 @@ const HOMECLOUD_CONFIG = {"version": 1, "freeBytes": null, "folderName": null, "
 
   buildPanel();
   document.addEventListener('visibilitychange', onVisibility);
+  document.addEventListener('securitypolicyviolation', onPolicyViolation);
   w.addEventListener('beforeunload', onBeforeUnload);
   w.__homecloudGoogle = instance;
   return MSG.open;

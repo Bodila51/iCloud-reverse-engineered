@@ -4,10 +4,17 @@
 // navigator.wakeLock and navigator.locks, and a minimal DOM. The fake batchexecute answers in
 // the format that GPTK's makeApiRequest and parser read (the wrb.fr envelope), checks every
 // request against GPTK's request format, and records each request id. Media and zip
-// addresses are served from memory. The folder handle writes into a real folder the way
-// Chrome does: a .crswap file that close() moves into place.
+// addresses are served from memory, with the credentials rules that gpb measured
+// (photos.fife.usercontent.google.com needs the session, video-downloads.googleusercontent.com
+// refuses it). The folder handle writes into a real folder the way Chrome does: a .crswap
+// file that close() moves into place. A hidden frame that opens a zip address saves the zip
+// into --downloads the way Chrome does: NAME.crdownload, renamed when complete, " (1)" when
+// the name is taken, and a question before the second download that the person answers
+// with Allow. With --python, every look of the page at google-collected.jsonl first runs
+// google_photos.py status, as Claude Code does while the page works.
 //
 // Usage: node harness.mjs --scenario NAME --dir DIR --script FILLED_SCRIPT [--run N]
+//        [--downloads FOLDER] [--python PYTHON --google-py google_photos.py]
 // The last line on stdout is a JSON summary. Everything else goes to stderr.
 
 import fs from 'node:fs';
@@ -16,6 +23,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import zlib from 'node:zlib';
 import crypto from 'node:crypto';
+import childProcess from 'node:child_process';
 
 // ----------------------------------------------------------------- arguments
 
@@ -25,8 +33,14 @@ const SCENARIO = args.scenario || 'full';
 const DIR = path.resolve(args.dir);
 const RUN = Number(args.run || 1);
 const SCRIPT = path.resolve(args.script);
-const KNOWN = ['full', 'nospace', 'cors', 'omit', 'broken', 'resume', 'wrongfolder', 'offline'];
+const DOWNLOADS = args.downloads ? path.resolve(args.downloads) : null;
+const PYTHON = args.python || null;
+const GOOGLE_PY = args['google-py'] ? path.resolve(args['google-py']) : null;
+const KNOWN = ['full', 'nospace', 'cors', 'swap', 'nolength', 'downloads', 'collect', 'notoken', 'livefail', 'framecsp',
+  'resume', 'wrongfolder', 'offline'];
 if (!KNOWN.includes(SCENARIO)) throw new Error('unknown scenario ' + SCENARIO);
+// The page fetches nothing itself in these: every media and zip address is blocked.
+const NOTHING_IN_PAGE = ['downloads', 'collect', 'notoken', 'framecsp'].includes(SCENARIO);
 
 // ----------------------------------------------------------------- the fake library
 
@@ -51,7 +65,7 @@ const BASE = [
   { key: 'K06', name: 'a:b?.jpg', taken: T('2023-08-01T12:00:00Z'), size: 4100 },
   { key: 'K12', name: 'con.jpg', taken: T('2023-07-01T12:00:00Z'), size: 4200 },
   { key: 'K13', name: 'note‮txt~1.jpg', taken: T('2023-06-01T12:00:00Z'), size: 4300 },
-  { key: 'K05', name: 'edited.jpg', taken: T('2023-05-01T12:00:00Z'), size: 3500, editedSize: 3300 },
+  { key: 'K05', name: 'edited.jpg', taken: T('2023-05-01T12:00:00Z'), size: 3500 },
   { key: 'K07', name: 'from-fdcn4b.png', taken: T('2023-04-01T12:00:00Z'), size: 4400, extOnly: true },
   { key: 'K08', name: 'saver.jpg', taken: T('2023-03-01T12:00:00Z'), size: 4500, quality: false },
   { key: 'K10', name: 'old.jpg', taken: T('1999-12-31T23:30:00Z'), size: 4600 },
@@ -90,29 +104,42 @@ function content(key, variant, size) {
 const BLOBS = new Map(); // "key/variant" -> Buffer
 for (const it of ITEMS) {
   BLOBS.set(it.key + '/orig', content(it.key, 'orig', it.size));
-  if (it.editedSize) BLOBS.set(it.key + '/edited', content(it.key, 'edited', it.editedSize));
   if (it.live) BLOBS.set(it.key + '/live', content(it.key, 'live', it.liveSize));
 }
 const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
+// Google's size for a Live Photo: the photo alone, or the photo and its video together. In
+// "nolength", Google gives no size for K07, and the media hosts send no Content-Length.
 function googleSize(it) {
+  if (SCENARIO === 'nolength' && it.key === 'K07') return null;
   return it.live && LIVE_RULE === 'both' ? it.size + it.liveSize : it.size;
 }
 
 const isVideo = (it) => it.kind === 'video';
+const FIFE = 'photos.fife.usercontent.google.com';
+const VIDEO_HOST = 'video-downloads.googleusercontent.com';
+const ZIP_HOST = 'doc-export.googleusercontent.com';
+const DISPLAY_HOST = 'lh3.google.com';
+// gpb internal/gphotos/testdata/download-url.json: the signed original at [1] (photos on the
+// fife host, videos and video parts on video-downloads), and a display address at [7].
 function mediaUrl(it, variant) {
-  const host = isVideo(it) || variant === 'live' ? 'video-downloads.googleusercontent.com' : 'lh3.googleusercontent.com';
+  const host = isVideo(it) || variant === 'live' ? VIDEO_HOST : FIFE;
   return 'https://' + host + '/hcfake/' + it.key + '/' + variant + '?sig=SECRET-LINK-' + it.key;
 }
-const thumbUrl = (it) => 'https://photos.fife.usercontent.google.com/pw/THUMB-' + it.key;
+const displayUrl = (it) => 'https://' + DISPLAY_HOST + '/hcfake/' + it.key + '/display';
+const thumbUrl = (it) => 'https://' + FIFE + '/pw/THUMB-' + it.key;
 
 // ----------------------------------------------------------------- records
 
 const rec = {
   rpc: {},
   protocolErrors: [],
-  media: [], // {key, variant, cred, outcome}
+  media: [], // {key, variant, host, cred, outcome}
   blocked: 0,
+  navigations: [], // zip addresses that a hidden frame opened: {token, part}
+  allowPrompts: 0,
+  collectorRuns: 0,
+  cspEvents: 0,
   nonGoogle: [],
   sinks: [],
   joinedAlbumRead: false,
@@ -167,9 +194,8 @@ function itemInfo(it) {
   if (it.live) ext['146008172'] = [null, 2500, null, mediaUrl(it, 'live')];
   const item0 = [it.key, [thumbUrl(it), 1440, 1080], it.taken, it.dedup, 3600000, it.taken + 1000, [ME],
     [[1], [2], [3]], 2, null, null, null, null, !!it.archived, 53578, ext];
-  const out = [item0, mediaUrl(it, it.editedSize ? 'edited' : 'orig'), [[1], [2]], [ME, '100000000001'], { 11: '', 13: thumbUrl(it) }];
-  if (it.editedSize) out.push(null, null, mediaUrl(it, 'orig'));
-  return out;
+  return [item0, mediaUrl(it, 'orig'), [[1], [2]], [ME, '100000000001'], { 11: '', 13: thumbUrl(it) }, null, null,
+    displayUrl(it)];
 }
 
 function albumRow(a) {
@@ -184,7 +210,7 @@ function albumItem(a, d, i) {
   return ['AK-' + a.key + '-' + i, [thumbUrl({ key: d }), 1440, 1080], taken, d, 0, taken + 1000, [a.owner], [[1]], 2, { 15: 53578 }];
 }
 
-const tokens = new Map(); // token -> {key, polls}
+const tokens = new Map(); // token -> {keys, polls, parts}
 let lcxiCalls = 0;
 let tokenCount = 0;
 
@@ -249,13 +275,15 @@ function answer(rpcid, data) {
       return it ? itemInfo(it) : [];
     }
     case 'yCLA7': {
-      if (!(Array.isArray(data) && data.length === 1 && Array.isArray(data[0]) && data[0].length === 1 &&
-        Array.isArray(data[0][0]) && data[0][0].length === 1)) perr('yCLA7 request');
-      const it = BY_KEY.get(data[0][0][0]);
-      if (!it) return [];
+      // [mappedKeys], GPTK src/api/api.ts lines 476 to 487
+      if (!(Array.isArray(data) && data.length === 1 && Array.isArray(data[0]) && data[0].length >= 1 &&
+        data[0].every((k) => Array.isArray(k) && k.length === 1 && typeof k[0] === 'string'))) perr('yCLA7 request');
+      const keys = data[0].map((k) => k[0]);
+      if (!keys.every((k) => BY_KEY.has(k))) return [];
+      if (SCENARIO === 'notoken') return [];
       tokenCount += 1;
-      const token = 'TOKEN-' + it.key + '-' + tokenCount;
-      tokens.set(token, { key: it.key, polls: 0 });
+      const token = 'TOKEN-' + tokenCount;
+      tokens.set(token, { keys, polls: 0, parts: null });
       return [token];
     }
     case 'dnv2s': {
@@ -264,8 +292,9 @@ function answer(rpcid, data) {
       if (!t) { perr('dnv2s unknown token'); return []; }
       t.polls += 1;
       if (t.polls < 2) return [[[[data[0][0], 1], 0]]];
-      const z = zipFor(BY_KEY.get(t.key));
-      return [[[[data[0][0], 4, [[z.name, 'https://doc-export.googleusercontent.com/download/' + data[0][0], z.buf.length, z.unzipped]], 0], 100, 2]]];
+      if (!t.parts) t.parts = zipParts(t.keys.map((k) => BY_KEY.get(k)));
+      const files = t.parts.map((z, i) => [z.name, 'https://' + ZIP_HOST + '/download/' + data[0][0] + '/' + i, z.buf.length, z.unzipped]);
+      return [[[[data[0][0], 4, files, 0], 100, 2]]];
     }
     default:
       perr('request id that is not read-only: ' + rpcid);
@@ -362,24 +391,42 @@ function makeZip(entries) {
   return Buffer.concat(parts.concat([cd, eocd]));
 }
 
-// Photos come as a zip, videos as the plain file, Live Photos as a zip with both parts.
-const zipCache = new Map();
-function zipFor(it) {
-  if (zipCache.has(it.key)) return zipCache.get(it.key);
-  const orig = BLOBS.get(it.key + '/orig');
-  let z;
-  if (isVideo(it)) {
-    z = { name: it.name, buf: orig, unzipped: orig.length };
-  } else if (it.live) {
-    const live = BLOBS.get(it.key + '/live');
-    const stem = it.name.replace(/\.[^.]+$/, '');
-    z = { name: 'Photos-001.zip', buf: makeZip([{ name: 'Google Photos/' }, { name: 'Google Photos/' + it.name, data: orig },
-      { name: 'Google Photos/' + stem + '.MOV', data: live, deflate: true }]), unzipped: orig.length + live.length };
-  } else {
-    z = { name: 'Photos-001.zip', buf: makeZip([{ name: it.name, data: orig }]), unzipped: orig.length };
+// The files of a download: one video alone comes as the plain file; everything else comes in
+// zip files of about 200 KB, named Photos-001.zip, Photos-002.zip and so on, with the two
+// parts of a Live Photo next to each other in a folder.
+function zipParts(items) {
+  if (items.length === 1 && isVideo(items[0])) {
+    const orig = BLOBS.get(items[0].key + '/orig');
+    return [{ name: items[0].name, buf: orig, unzipped: orig.length }];
   }
-  zipCache.set(it.key, z);
-  return z;
+  const groups = [];
+  let cur = null;
+  for (const it of items) {
+    const files = [{ name: it.name, data: BLOBS.get(it.key + '/orig') }];
+    if (it.live) {
+      const stem = it.name.replace(/\.[^.]+$/, '');
+      files[0].name = 'Google Photos/' + it.name;
+      files.push({ name: 'Google Photos/' + stem + '.MOV', data: BLOBS.get(it.key + '/live'), deflate: true });
+    }
+    const bytes = files.reduce((n, f) => n + f.data.length, 0);
+    if (!cur || (cur.bytes && cur.bytes + bytes > 200000)) {
+      cur = { files: [], bytes: 0 };
+      groups.push(cur);
+    }
+    cur.files = cur.files.concat(files);
+    cur.bytes += bytes;
+  }
+  return groups.map((g, i) => {
+    const entries = g.files.some((f) => f.name.startsWith('Google Photos/')) ? [{ name: 'Google Photos/' }].concat(g.files) : g.files;
+    return { name: 'Photos-' + String(i + 1).padStart(3, '0') + '.zip', buf: makeZip(entries), unzipped: g.bytes };
+  });
+}
+
+function zipByUrl(u) {
+  const m = /^\/download\/(TOKEN-\d+)\/(\d+)$/.exec(u.pathname);
+  const t = m && tokens.get(m[1]);
+  if (!t || !t.parts || !t.parts[Number(m[2])]) return null;
+  return { token: m[1], part: Number(m[2]), keys: t.keys, z: t.parts[Number(m[2])] };
 }
 
 function bodyStream(buf, signal) {
@@ -403,15 +450,38 @@ function bodyStream(buf, signal) {
 }
 
 let mediaCount = 0;
-let failedOnce = false;
 const STOP_AT = SCENARIO === 'resume' && RUN === 1 ? 7 : 0;
+const truncatedOnce = new Set();
+let failedOnce = false;
+// "resume", second run: the first two photos fail every way 8 times, so the first check of photos
+// fails, although photos worked in the first run.
+const victims = [];
+const victimFails = new Map();
 
-function blockedFor(host, cred) {
-  const itemHosts = ['lh3.googleusercontent.com', 'video-downloads.googleusercontent.com'];
-  if (SCENARIO === 'cors') return itemHosts.includes(host);
-  if (SCENARIO === 'omit') return itemHosts.includes(host) && cred === 'include';
-  if (SCENARIO === 'broken') return itemHosts.includes(host) || host === 'doc-export.googleusercontent.com';
-  return false;
+// null when the host serves the file, else how it refuses: a CORS block, or a status.
+function refusal(host, cred, key, variant) {
+  if (NOTHING_IN_PAGE) return 'blocked';
+  if (SCENARIO === 'cors' && host !== ZIP_HOST) return 'blocked';
+  if (SCENARIO === 'livefail' && (host === ZIP_HOST || (host === VIDEO_HOST && variant === 'live'))) return 'blocked';
+  if (SCENARIO === 'resume' && RUN >= 2) {
+    const it = BY_KEY.get(key);
+    if (it && !it.live && !isVideo(it)) {
+      if (victims.length < 2 && !victims.includes(key)) victims.push(key);
+      if (victims.includes(key) && (victimFails.get(key) || 0) < 8) {
+        victimFails.set(key, (victimFails.get(key) || 0) + 1);
+        return 'blocked';
+      }
+    }
+  }
+  if (SCENARIO === 'swap') {
+    if (host === FIFE && cred === 'include') return 403;
+    if (host === VIDEO_HOST && cred === 'omit') return 401;
+    return null;
+  }
+  // gpb DESIGN.md lines 1690 to 1703
+  if (host === FIFE && cred === 'omit') return 403;
+  if (host === VIDEO_HOST && cred === 'include') return 'blocked';
+  return null;
 }
 
 async function media(url, init) {
@@ -422,8 +492,11 @@ async function media(url, init) {
     rec.nonGoogle.push(String(url));
     throw new TypeError('Failed to fetch');
   }
-  const hosts = ['lh3.googleusercontent.com', 'video-downloads.googleusercontent.com', 'doc-export.googleusercontent.com'];
-  if (!hosts.includes(u.hostname)) {
+  if (u.hostname === DISPLAY_HOST) {
+    perr('the display address at [7] was fetched');
+    return new Response('', { status: 404 });
+  }
+  if (![FIFE, VIDEO_HOST, ZIP_HOST].includes(u.hostname)) {
     rec.nonGoogle.push(u.origin + u.pathname);
     throw new TypeError('Failed to fetch');
   }
@@ -434,18 +507,16 @@ async function media(url, init) {
   let variant;
   let buf;
   let type;
-  if (u.hostname === 'doc-export.googleusercontent.com') {
-    const token = u.pathname.split('/').pop();
-    const t = tokens.get(token);
-    if (!t) {
+  if (u.hostname === ZIP_HOST) {
+    const found = zipByUrl(u);
+    if (!found) {
       perr('unknown zip address');
       return new Response('', { status: 404 });
     }
-    key = t.key;
+    key = found.keys.join('+');
     variant = 'zip';
-    const z = zipFor(BY_KEY.get(key));
-    buf = z.buf;
-    type = z.name.endsWith('.zip') ? 'application/zip' : 'video/mp4';
+    buf = found.z.buf;
+    type = found.z.name.endsWith('.zip') ? 'application/zip' : 'video/mp4';
   } else {
     const m = /^\/hcfake\/([^/]+)\/([^/]+)$/.exec(u.pathname);
     if (!m || !BLOBS.has(m[1] + '/' + m[2])) {
@@ -457,7 +528,7 @@ async function media(url, init) {
     buf = BLOBS.get(key + '/' + variant);
     type = isVideo(BY_KEY.get(key)) || variant === 'live' ? 'video/quicktime' : 'image/jpeg';
   }
-  const entry = { key, variant, cred, outcome: 'ok' };
+  const entry = { key, variant, host: u.hostname, cred, outcome: 'ok' };
   rec.media.push(entry);
   if (init.signal && init.signal.aborted) {
     entry.outcome = 'aborted';
@@ -469,17 +540,30 @@ async function media(url, init) {
     entry.outcome = 'stopped';
     throw abortError();
   }
-  if (blockedFor(u.hostname, cred)) {
+  const refused = refusal(u.hostname, cred, key.split('+')[0], variant);
+  if (refused === 'blocked') {
     rec.blocked += 1;
     entry.outcome = 'blocked';
     throw new TypeError('Failed to fetch');
+  }
+  if (refused) {
+    entry.outcome = String(refused);
+    return new Response('no', { status: refused, headers: { 'content-type': 'text/plain' } });
   }
   if (SCENARIO === 'full' && key === 'K03' && !failedOnce) {
     failedOnce = true;
     entry.outcome = '503';
     return new Response('busy', { status: 503, headers: { 'content-type': 'text/plain' } });
   }
-  return new Response(bodyStream(buf, init.signal), { status: 200, headers: { 'content-type': type, 'content-length': String(buf.length) } });
+  const headers = { 'content-type': type };
+  if (SCENARIO !== 'nolength') headers['content-length'] = String(buf.length);
+  if (SCENARIO === 'full' && key === 'K04' && !truncatedOnce.has(key)) {
+    // The connection ends early: half the bytes of the Content-Length.
+    truncatedOnce.add(key);
+    entry.outcome = 'short';
+    return new Response(bodyStream(buf.subarray(0, buf.length >> 1), init.signal), { status: 200, headers });
+  }
+  return new Response(bodyStream(buf, init.signal), { status: 200, headers });
 }
 
 async function fakeFetch(input, init = {}) {
@@ -611,6 +695,7 @@ class FakeDirHandle {
   }
   async getFileHandle(name, opts = {}) {
     if (badName(name)) throw nameNotAllowed(name);
+    if (name === 'google-collected.jsonl' && PYTHON && path.basename(this.p) === '.homecloud') runCollector();
     const p = path.join(this.p, name);
     const st = await statOrNull(p);
     if (st && st.isDirectory()) throw new DOMException('A folder is in the way.', 'TypeMismatchError');
@@ -697,6 +782,7 @@ class FakeElement {
     if (child.parentNode) child.remove();
     child.parentNode = this;
     this.children.push(child);
+    if (child.tagName === 'IFRAME' && typeof child.src === 'string' && connected(this)) openFrame(child);
     return child;
   }
   remove() {
@@ -719,6 +805,11 @@ class FakeElement {
 const html = new FakeElement('html');
 const body = new FakeElement('body');
 html.appendChild(body);
+function connected(elx) {
+  for (let e = elx; e; e = e.parentNode) if (e === html) return true;
+  return false;
+}
+const docListeners = {};
 const walk = (elx, fn) => {
   fn(elx);
   elx.children.forEach((c) => walk(c, fn));
@@ -735,8 +826,12 @@ const fakeDocument = {
     });
     return found;
   },
-  addEventListener() {},
-  removeEventListener() {},
+  addEventListener(type, fn) {
+    (docListeners[type] = docListeners[type] || []).push(fn);
+  },
+  removeEventListener(type, fn) {
+    docListeners[type] = (docListeners[type] || []).filter((f) => f !== fn);
+  },
   write() {
     rec.sinks.push('document.write');
     throw new TypeError("This document requires 'TrustedHTML' assignment.");
@@ -757,6 +852,82 @@ function clickButton(label) {
   });
   if (!button) throw new Error('no ' + label + ' button');
   button.click();
+}
+
+// ----------------------------------------------------------------- browser downloads
+
+let downloadsAsked = 0;
+let allowed = false;
+const held = [];
+
+// A hidden frame opened a zip address: Chrome saves the answer, an attachment, in Downloads.
+function openFrame(frame) {
+  let u;
+  try {
+    u = new URL(frame.src);
+  } catch (e) {
+    perr('a frame opened an address that is not one');
+    return;
+  }
+  const found = u.hostname === ZIP_HOST ? zipByUrl(u) : null;
+  if (!found) {
+    perr('a frame opened an unknown address ' + u.hostname + u.pathname);
+    return;
+  }
+  rec.navigations.push({ token: found.token, part: found.part });
+  if (SCENARIO === 'framecsp') {
+    rec.cspEvents += 1;
+    const ev = { type: 'securitypolicyviolation', effectiveDirective: 'frame-src', violatedDirective: 'frame-src',
+      blockedURI: 'https://' + ZIP_HOST, disposition: 'enforce' };
+    realSetTimeout(() => (docListeners.securitypolicyviolation || []).forEach((fn) => fn(ev)), 1);
+    return;
+  }
+  if (!DOWNLOADS) {
+    perr('a frame started a download, but no downloads folder was given');
+    return;
+  }
+  downloadsAsked += 1;
+  // The first download needs no question; the second one asks, and the person clicks Allow.
+  if (downloadsAsked === 1 || allowed) {
+    saveDownload(found.z);
+    return;
+  }
+  held.push(found.z);
+  if (held.length === 1 && rec.allowPrompts === 0) {
+    rec.allowPrompts += 1;
+    realSetTimeout(() => {
+      allowed = true;
+      held.splice(0).forEach(saveDownload);
+    }, 30);
+  }
+}
+
+function freeName(name) {
+  const dot = name.lastIndexOf('.');
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : '';
+  for (let n = 0; ; n++) {
+    const candidate = n ? stem + ' (' + n + ')' + ext : name;
+    if (!fs.existsSync(path.join(DOWNLOADS, candidate)) && !fs.existsSync(path.join(DOWNLOADS, candidate + '.crdownload'))) return candidate;
+  }
+}
+
+function saveDownload(z) {
+  const name = freeName(z.name);
+  const partial = path.join(DOWNLOADS, name + '.crdownload');
+  fs.writeFileSync(partial, z.buf.subarray(0, z.buf.length >> 1));
+  setImmediate(() => {
+    fs.appendFileSync(partial, z.buf.subarray(z.buf.length >> 1));
+    setImmediate(() => fs.renameSync(partial, path.join(DOWNLOADS, name)));
+  });
+}
+
+// Claude Code runs google_photos.py status while the page works.
+function runCollector() {
+  rec.collectorRuns += 1;
+  const proc = childProcess.spawnSync(PYTHON, [GOOGLE_PY, 'status', '--to', DIR, '--downloads', DOWNLOADS],
+    { encoding: 'utf8', timeout: 60000 });
+  if (proc.error || /Traceback/.test(proc.stderr || '')) perr('google_photos.py status failed: ' + (proc.error || proc.stderr));
 }
 
 // ----------------------------------------------------------------- the page
@@ -828,8 +999,9 @@ async function main() {
   for (const it of ITEMS) {
     expected[it.key] = { orig: { sha256: sha(BLOBS.get(it.key + '/orig')), size: it.size } };
     if (it.live) expected[it.key].live = { sha256: sha(BLOBS.get(it.key + '/live')), size: it.liveSize };
-    if (it.editedSize) expected[it.key].edited = { sha256: sha(BLOBS.get(it.key + '/edited')), size: it.editedSize };
   }
+  // Downloads the browser has not finished keep going after the page's run ends.
+  await new Promise((resolve) => realSetTimeout(resolve, held.length ? 60 : 5));
   let statusText = null;
   walk(html, (e) => {
     if (e.attributes['aria-live'] === 'polite') statusText = e.textContent;
@@ -845,6 +1017,12 @@ async function main() {
     protocolErrors: rec.protocolErrors,
     media: rec.media,
     blocked: rec.blocked,
+    navigations: rec.navigations,
+    allowPrompts: rec.allowPrompts,
+    collectorRuns: rec.collectorRuns,
+    cspEvents: rec.cspEvents,
+    downloadsLeft: DOWNLOADS && fs.existsSync(DOWNLOADS) ? fs.readdirSync(DOWNLOADS).sort() : null,
+    progress,
     nonGoogle: rec.nonGoogle,
     sinks: rec.sinks,
     joinedAlbumRead: rec.joinedAlbumRead,

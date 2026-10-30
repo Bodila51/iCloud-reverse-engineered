@@ -3,7 +3,7 @@
 photos.google.com tab, check the copy, and list it for import_library.py.
 
     python3 scripts/google/google_photos.py prepare --to DIR
-    python3 scripts/google/google_photos.py status --to DIR --wait 600
+    python3 scripts/google/google_photos.py status --to DIR --wait 100
     python3 scripts/google/google_photos.py verify --to DIR
     python3 scripts/google/google_photos.py takeout --to DIR
 
@@ -21,12 +21,17 @@ Commands
              Brave, Arc, Vivaldi or Opera, and prints your steps. --browser picks the
              browser (default auto: the first one installed, in that order). --no-open and
              --no-clipboard skip those two parts.
-    status   Read-only. Prints the progress the browser script saves in DIR. --wait SECONDS
-             checks every 10 seconds until the browser script ends or the time is up.
-    verify   Compares the browser script's list with the files in DIR, sets each file's
+    status   Prints the progress the browser script saves in DIR, and moves the files of
+             finished zip files from the Downloads folder into DIR (see below). --wait
+             SECONDS checks every 10 seconds until the browser script ends and its zip files
+             are moved, or the time is up.
+    verify   Moves finished zip files from the Downloads folder first, like status. Then it
+             compares the browser script's list with the files in DIR, sets each file's
              modification time to the time it was taken, writes DIR/.homecloud/manifest.jsonl
              for import_library.py, and lists what is missing or wrong. The last line starts
              with "Result:".
+             status and verify take --downloads FOLDER, more than once if needed, when the
+             browser saves downloads somewhere else than the system's Downloads folder.
     takeout  Google's own export, an optional route. Opens https://takeout.google.com and
              prints the steps. With --import, it imports the Takeout archives in DIR into
              Immich with immich-go. It shows the plan and asks first; --yes skips the question.
@@ -35,12 +40,24 @@ Exit codes
     0  done; verify: every listed item is on disk with the right size
     1  failed, stopped or not complete
     2  usage error, or nothing was changed because nobody agreed to the plan
-    4  status: the browser script is still working, or has not started yet
+    4  status: the browser script is still working or has not started yet, or the browser is
+       still saving its zip files in the Downloads folder
 
-Files in DIR/.homecloud. The browser script writes google-list.json, google-done.jsonl and
-google-progress.json. This script writes homecloud_google.js (prepare), manifest.jsonl and
-google-problems.txt (verify). verify leaves alone a manifest that another Homecloud script
-wrote.
+Zip files in the Downloads folder. When the page may not fetch some files itself, the browser
+script lets the browser download them as zip files from Google, in batches of up to 200 items,
+and writes one file per batch in DIR/.homecloud/google-batches: which items went into which
+zip file, with their names and sizes, and no download address. status and verify find those
+zip files in the Downloads folder (on Windows also the one that Windows names, on Linux the
+one in ~/.config/user-dirs.dirs), match each one to its batch by size and by the names inside,
+unpack the files of the batch into DIR/<YYYY>/<YYYY-MM>/, check each size against Google's,
+and add a line per item to google-collected.jsonl. A zip file is deleted when every file in it
+is in DIR; one with anything else in it stays where it is. Downloads that are not finished
+(.crdownload) are left alone.
+
+Files in DIR/.homecloud. The browser script writes google-list.json, google-done.jsonl,
+google-progress.json and google-batches/. This script writes homecloud_google.js (prepare),
+google-collected.jsonl (status and verify), manifest.jsonl and google-problems.txt (verify).
+verify leaves alone a manifest that another Homecloud script wrote.
 
 Sources
     Chrome's console paste warning and the words "allow pasting" (translated with the rest of
@@ -53,6 +70,14 @@ Sources
         both in https://github.com/chromium/chromium
     Brave keeps the folder window behind brave://flags/#file-system-access-api:
         https://github.com/brave/brave-browser/issues/11407
+    The browser asks once before a page downloads more than one file ("wants to download
+    multiple files", with Allow and Block): chrome/browser/download/download_request_limiter.h
+    and components/permissions_strings.grdp in https://github.com/chromium/chromium. Chrome
+    saves a download as NAME.crdownload and renames it when it is complete.
+    The Downloads folder: on Windows the Known Folder FOLDERID_Downloads
+    {374DE290-123F-4565-9164-39C4925E467B} in the registry key HKEY_CURRENT_USER\\Software\\Microsoft\\
+    Windows\\CurrentVersion\\Explorer\\User Shell Folders (learn.microsoft.com, KNOWNFOLDERID); on
+    Linux XDG_DOWNLOAD_DIR in ~/.config/user-dirs.dirs (freedesktop.org xdg-user-dirs).
     immich-go v0.32.0, the newest release on 2026-10-30 (Immich's docs recommend it for
     Takeout archives): https://github.com/simulot/immich-go/releases/tag/v0.32.0
         Each build is checked against the release's checksums.txt and against the SHA-256
@@ -106,6 +131,16 @@ SCRIPT_NAME = "homecloud_google.js"
 MANIFEST_NAME = "manifest.jsonl"
 PROBLEMS_NAME = "google-problems.txt"
 LIST_FORMAT = "homecloud-google-list"
+BATCHES_DIR = "google-batches"
+BATCH_FORMAT = "homecloud-google-batch"
+COLLECTED_NAME = "google-collected.jsonl"
+# Downloads that are not complete yet: Chromium browsers use .crdownload, the rest are other
+# download tools that may save into the same folder.
+PARTIAL_SUFFIXES = (".crdownload", ".part", ".partial", ".download", ".tmp", ".opdownload")
+PIECE_SUFFIX = ".homecloud-part"  # a file this script is unpacking; renamed when it is complete
+DOWNLOADS_GUID = "{374DE290-123F-4565-9164-39C4925E467B}"
+SHELL_FOLDERS = r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders"
+COPY_CHUNK = 1024 * 1024
 
 PHOTOS_URL = "https://photos.google.com"
 TAKEOUT_URL = "https://takeout.google.com"
@@ -730,6 +765,9 @@ def print_steps(folder: Path, browser: str, clipboard: bool, brave: bool, script
         [f"A Homecloud panel appears on the page. Click Start. In the folder window, choose the folder "
          f"\"{folder.name or folder}\" ({folder}). When the browser asks \"Allow this site to edit files?\", "
          "click Allow."],
+        ["If the browser says that photos.google.com wants to download multiple files, click Allow. The files "
+         "that the page cannot save directly then arrive as zip files in your Downloads folder. Leave them "
+         "there: Claude Code moves them into the folder."],
         ["The script lists your library, compares its size with the free space, and downloads every photo and "
          "video into that folder. Leave the tab open, ideally in front, and keep the computer awake and "
          "plugged in."],
@@ -754,9 +792,510 @@ def print_steps(folder: Path, browser: str, clipboard: bool, brave: bool, script
         f"Takeout still works: {kit_command('takeout', folder)}")
     say("  - Items saved in Storage saver have no original at Google, so you get the copy Google keeps. "
         "Locked Folder and Trash are not included.")
+    say("  - Zip files in your Downloads folder: status and verify unpack the files of each one into the folder, "
+        "check their sizes, and then delete the zip file. A zip file that holds anything else stays there.")
     say("")
     say(f"Progress: {kit_command('status', folder)}")
     say(f"When the panel says Done: {kit_command('verify', folder)}")
+
+
+# ---------------------------------------------------------------- zip files in Downloads
+
+def windows_downloads() -> Optional[Path]:
+    """The Downloads folder that Windows names, also after the person moved it."""
+    try:
+        import winreg  # type: ignore[import-not-found]
+    except ImportError:
+        return None
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, SHELL_FOLDERS) as key:
+            value, _kind = winreg.QueryValueEx(key, DOWNLOADS_GUID)
+    except OSError:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return Path(os.path.expandvars(value.strip()))
+
+
+def xdg_downloads() -> Optional[Path]:
+    """XDG_DOWNLOAD_DIR from ~/.config/user-dirs.dirs, the Downloads folder on Linux."""
+    config = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    try:
+        text = (Path(config) / "user-dirs.dirs").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    match = re.search(r'^\s*XDG_DOWNLOAD_DIR\s*=\s*"([^"\n]+)"', text, re.M)
+    if not match:
+        return None
+    return Path(match.group(1).replace("$HOME", str(Path.home())))
+
+
+def downloads_folders(given: Optional[List[str]] = None) -> List[Path]:
+    """--downloads, or the folders where browsers save downloads on this computer."""
+    candidates: List[Optional[Path]] = []
+    if given:
+        candidates = [Path(os.path.expanduser(value)) for value in given]
+    else:
+        if is_windows():
+            candidates.append(windows_downloads())
+            profile = os.environ.get("USERPROFILE")
+            if profile:
+                candidates.append(Path(profile) / "Downloads")
+        elif sys.platform != "darwin":
+            candidates.append(xdg_downloads())
+        candidates.append(Path.home() / "Downloads")
+    out: List[Path] = []
+    seen: Set[str] = set()
+    for candidate in candidates:
+        try:
+            if candidate is None or not candidate.is_dir():
+                continue
+            resolved = candidate.resolve()
+        except (OSError, RuntimeError):
+            continue
+        if path_key(str(resolved)) not in seen:
+            seen.add(path_key(str(resolved)))
+            out.append(resolved)
+    return out
+
+
+def fold_name(name: str) -> str:
+    """Names compared the way fold() in homecloud_google.js compares them."""
+    return unicodedata.normalize("NFC", name).upper().lower()
+
+
+def split_name(name: str) -> Tuple[str, str]:
+    """(stem, extension), by the rule of splitName() in homecloud_google.js."""
+    dot = name.rfind(".")
+    if dot <= 0 or dot == len(name) - 1 or len(name) - dot > 12:
+        return name, ""
+    return name[:dot], name[dot:]
+
+
+def loose_stem(stem: str) -> str:
+    """A stem without the characters that a zip tool or a disk may replace."""
+    return re.sub(r'[\x00-\x1f"*/:<>?\\|~_\s]', "", fold_name(stem))
+
+
+def member_name(info: zipfile.ZipInfo) -> str:
+    """A zip entry's file name without its folder. Names without the UTF-8 flag are tried as
+    UTF-8 first, since zipfile reads them as cp437."""
+    name = info.filename
+    if not info.flag_bits & 0x800:
+        try:
+            name = name.encode("cp437").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+    return name.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def finished_line(record) -> bool:
+    """A line for an item that is on disk: its file, and the video part of a Live Photo or null."""
+    if not isinstance(record, dict) or not isinstance(record.get("mediaKey"), str) or "error" in record:
+        return False
+    if safe_rel(record.get("path")) is None or not int_or_none(record.get("size")):
+        return False
+    live = record.get("livePath")
+    return live is None or (safe_rel(live) is not None and bool(int_or_none(record.get("liveSize"))))
+
+
+def parse_batch(data) -> Optional[dict]:
+    if not isinstance(data, dict) or data.get("format") != BATCH_FORMAT or data.get("version") != 1:
+        return None
+    batch_id, zips, raw_items = data.get("batch"), data.get("zips"), data.get("items")
+    if not isinstance(batch_id, str) or not batch_id or not isinstance(zips, list) or not isinstance(raw_items, list):
+        return None
+    parts = []
+    for z in zips:
+        if not isinstance(z, dict):
+            return None
+        parts.append({"name": z.get("name") if isinstance(z.get("name"), str) else "",
+                      "size": int_or_none(z.get("size")) or None})
+    items = []
+    for raw in raw_items:
+        if not isinstance(raw, dict) or not isinstance(raw.get("mediaKey"), str):
+            continue
+        path, name = safe_rel(raw.get("path")), raw.get("fileName")
+        live = raw.get("live") is True
+        live_path = safe_rel(raw.get("livePath")) if live else None
+        if path is None or not isinstance(name, str) or not name or (live and live_path is None):
+            continue
+        stem, ext = split_name(name.replace("\\", "/").rsplit("/", 1)[-1])
+        items.append({"key": raw["mediaKey"], "name": name, "size": int_or_none(raw.get("size")),
+                      "kind": "video" if raw.get("kind") == "video" else "photo", "live": live, "path": path,
+                      "live_path": live_path, "stem": fold_name(stem), "loose": loose_stem(stem),
+                      "ext": fold_name(ext)})
+    return {"batch": batch_id, "zips": parts, "items": items}
+
+
+def load_batches(folder: Path) -> List[dict]:
+    base = state_path(folder, BATCHES_DIR)
+    try:
+        names = sorted(n for n in os.listdir(base) if n.endswith(".json"))
+    except OSError:
+        return []
+    batches = []
+    for name in names:
+        try:
+            batch = parse_batch(read_json(base / name))
+        except (OSError, ValueError):
+            continue
+        if batch:
+            batches.append(batch)
+    return batches
+
+
+def load_collected(folder: Path) -> Tuple[Dict[str, dict], Set[Tuple[str, int]]]:
+    """The items that status or verify moved here from zip files, and the zip files they
+    finished, from google-collected.jsonl."""
+    records: Dict[str, dict] = {}
+    parts: Set[Tuple[str, int]] = set()
+    try:
+        fh = open(state_path(folder, COLLECTED_NAME), "r", encoding="utf-8", errors="replace")
+    except OSError:
+        return records, parts
+    with fh:
+        for line in fh:
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            if isinstance(record.get("batch"), str) and int_or_none(record.get("part")) is not None:
+                parts.add((record["batch"], record["part"]))
+            elif finished_line(record):
+                old = records.get(record["mediaKey"])
+                if old is None or old.get("livePath") is None or record.get("livePath") is not None:
+                    records[record["mediaKey"]] = record
+    return records, parts
+
+
+def merge_collected(records: Dict[str, dict], collected: Dict[str, dict]) -> Dict[str, dict]:
+    """google-done.jsonl with the lines of google-collected.jsonl: a collected line counts when the
+    browser script has no finished line for the item, or one without the video part it brings."""
+    for key, record in collected.items():
+        current = records.get(key)
+        if not finished_line(current) or (current.get("livePath") is None and record.get("livePath") is not None):
+            records[key] = record
+    return records
+
+
+def same_download_name(name: str, wanted: str) -> bool:
+    """The name the browser gave a download: the name Google sent, perhaps with " (1)" added."""
+    if not wanted:
+        return False
+    stem, ext = split_name(name)
+    want_stem, want_ext = split_name(wanted)
+    stem = re.sub(r" \(\d+\)$", "", stem)
+    return fold_name(stem) == fold_name(want_stem) and fold_name(ext) == fold_name(want_ext)
+
+
+def item_for(batch: dict, name: str) -> Tuple[Optional[dict], bool]:
+    """(the item a file in a zip belongs to, whether it is the video part of a Live Photo)."""
+    stem, ext = split_name(name)
+    ext = fold_name(ext)
+    found = [i for i in batch["items"] if i["stem"] == fold_name(stem)]
+    if not found:
+        found = [i for i in batch["items"] if i["loose"] == loose_stem(stem)]
+    for item in found:
+        if ext == item["ext"]:
+            return item, False
+    for item in found:
+        if item["live"] and ext in VIDEO_EXTS:
+            return item, True
+    return None, False
+
+
+class Moved:
+    """What one look at the Downloads folder did."""
+
+    def __init__(self) -> None:
+        self.files = 0
+        self.zips = 0
+        self.kept: List[str] = []
+        self.problems: List[str] = []
+        self.full = False
+
+
+def place_member(zf: zipfile.ZipFile, info: zipfile.ZipInfo, target: Path) -> None:
+    """Unpacks one file into a piece next to its place, checks it, and renames it into place.
+    zipfile checks the CRC of the bytes as it reads them."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    piece = target.with_name(f"{target.name}.{os.getpid()}{PIECE_SUFFIX}")
+    try:
+        with zf.open(info) as src, open(piece, "wb") as dst:
+            shutil.copyfileobj(src, dst, COPY_CHUNK)
+            dst.flush()
+            os.fsync(dst.fileno())
+        if file_size(piece) != info.file_size:
+            raise zipfile.BadZipFile("a file in the zip ended early")
+        os.replace(piece, target)
+    except BaseException:
+        try:
+            os.unlink(piece)
+        except OSError:
+            pass
+        raise
+
+
+def move_plain(src: Path, target: Path) -> None:
+    """Moves a downloaded file into place: a rename on the same disk, else a checked copy."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.rename(src, target)
+        return
+    except OSError:
+        pass
+    piece = target.with_name(f"{target.name}.{os.getpid()}{PIECE_SUFFIX}")
+    try:
+        with open(src, "rb") as fin, open(piece, "wb") as fout:
+            shutil.copyfileobj(fin, fout, COPY_CHUNK)
+            fout.flush()
+            os.fsync(fout.fileno())
+        if file_size(piece) != file_size(src):
+            raise OSError("the copy is incomplete")
+        os.replace(piece, target)
+    except BaseException:
+        try:
+            os.unlink(piece)
+        except OSError:
+            pass
+        raise
+    os.unlink(src)
+
+
+def sizes_fit(item: dict, size: int, live_size: Optional[int]) -> bool:
+    """Google's size is the photo or video, or for a Live Photo the photo alone or both parts."""
+    if item["size"] is None:
+        return True
+    if size == item["size"]:
+        return True
+    return item["live"] and live_size is not None and size + live_size == item["size"]
+
+
+def known_on_disk(folder: Path, rel: str, records: Dict[str, dict], key: str, live: bool) -> Optional[int]:
+    """The size of a file that is already in place and that a finished line vouches for."""
+    record = records.get(key)
+    disk = file_size(folder / rel)
+    if disk is None or not finished_line(record):
+        return None
+    if live:
+        ok = record.get("livePath") == rel and record.get("liveSize") == disk
+    else:
+        ok = record.get("path") == rel and record.get("size") == disk
+    return disk if ok else None
+
+
+def collect_zip(folder: Path, zip_path: Path, batch: dict, records: Dict[str, dict],
+                moved: Moved) -> Tuple[bool, List[dict]]:
+    """Unpacks the files of one batch from one zip. (every file used, lines for google-collected.jsonl)."""
+    with zipfile.ZipFile(zip_path) as zf:
+        members = [info for info in zf.infolist() if not info.is_dir()]
+        by_item: Dict[str, Dict[str, zipfile.ZipInfo]] = {}
+        extra = 0
+        for info in members:
+            item, is_video = item_for(batch, member_name(info))
+            slot = "video" if is_video else "main"
+            if item is None or slot in by_item.get(item["key"], {}):
+                extra += 1
+                continue
+            by_item.setdefault(item["key"], {})[slot] = info
+        used_all = extra == 0
+        lines = []
+        items = {i["key"]: i for i in batch["items"]}
+        for key, parts in by_item.items():
+            item = items[key]
+            main, video = parts.get("main"), parts.get("video")
+            if main is None:
+                used_all = False
+                continue
+            live_size = video.file_size if video is not None and item["live"] else None
+            if not sizes_fit(item, main.file_size, live_size):
+                moved.problems.append(f"{item['name']}: the zip file holds {main.file_size:,} bytes, Google lists "
+                                      f"{item['size']:,}. It was not moved; a new run of the browser script "
+                                      "downloads it again.")
+                used_all = False
+                continue
+            placed = False
+            wanted = [(main, item["path"], False)]
+            if live_size is not None:
+                wanted.append((video, item["live_path"], True))
+            ok = True
+            for info, rel, live in wanted:
+                disk = file_size(folder / rel)
+                if disk is not None:
+                    if disk != info.file_size and known_on_disk(folder, rel, records, key, live) is None:
+                        moved.problems.append(f"{rel} is already in the folder with another size. It was left "
+                                              "as it is.")
+                        ok = used_all = False
+                    continue
+                place_member(zf, info, folder / rel)
+                moved.files += 1
+                placed = True
+            if not ok:
+                continue
+            old = records.get(key)
+            if placed or not finished_line(old) or (old.get("livePath") is None and live_size is not None):
+                main_size = file_size(folder / item["path"]) or main.file_size
+                line = {"mediaKey": key, "path": item["path"], "size": main_size,
+                        "livePath": item["live_path"] if live_size is not None else None,
+                        "liveSize": file_size(folder / item["live_path"]) if live_size is not None else None}
+                lines.append(line)
+                records[key] = line
+        return used_all, lines
+
+
+def collect_downloads(folder: Path, places: List[Path]) -> Tuple[Moved, int, int]:
+    """Moves the files of the zip files from the browser script's batches out of the Downloads
+    folder into DIR. (what it did, zip files still to come, zip files in all)."""
+    moved = Moved()
+    batches = load_batches(folder)
+    if not batches:
+        return moved, 0, 0
+    done_records, _bad = load_done(folder)
+    collected, parts_done = load_collected(folder)
+    records = merge_collected(done_records, collected)
+    pending: Dict[Tuple[str, int], Tuple[dict, dict]] = {}
+    total = 0
+    for batch in batches:
+        for index, z in enumerate(batch["zips"]):
+            total += 1
+            if (batch["batch"], index) not in parts_done:
+                pending[(batch["batch"], index)] = (batch, z)
+    for place in places:
+        if not pending or moved.full:
+            break
+        try:
+            entries = sorted(os.scandir(place), key=lambda e: e.name)
+        except OSError:
+            continue
+        for entry in entries:
+            if not pending or moved.full:
+                break
+            name = entry.name
+            if name.startswith(".") or name.lower().endswith(PARTIAL_SUFFIXES) or name.endswith(PIECE_SUFFIX):
+                continue
+            try:
+                if not entry.is_file(follow_symlinks=False):
+                    continue
+                size = entry.stat(follow_symlinks=False).st_size
+            except OSError:
+                continue
+            fits = [k for k, (_b, z) in pending.items()
+                    if z["size"] == size or (z["size"] is None and same_download_name(name, z["name"]))]
+            if not fits:
+                continue
+            path = Path(entry.path)
+            try:
+                found = collect_file(folder, path, size, fits, pending, records, moved)
+            except OSError as err:
+                if getattr(err, "errno", None) == 28:
+                    moved.full = True
+                    moved.problems.append("The disk is full. Free some space, then run status or verify again.")
+                    break
+                moved.problems.append(f"{name} in {place} could not be moved ({err.strerror or err}).")
+                continue
+            except (zipfile.BadZipFile, EOFError, RuntimeError, NotImplementedError) as err:
+                moved.problems.append(f"{name} in {place} could not be unpacked ({clean_text(str(err), 80)}). It "
+                                      "stays there.")
+                continue
+            if found:
+                pending.pop(found, None)
+    return moved, len(pending), total
+
+
+def collect_file(folder: Path, path: Path, size: int, fits: List[Tuple[str, int]],
+                 pending: Dict[Tuple[str, int], Tuple[dict, dict]], records: Dict[str, dict],
+                 moved: Moved) -> Optional[Tuple[str, int]]:
+    """Handles one file in the Downloads folder that has the size of a zip file to come."""
+    if zipfile.is_zipfile(path):
+        with zipfile.ZipFile(path) as zf:
+            names = [member_name(i) for i in zf.infolist() if not i.is_dir()]
+        best, best_hits = None, 0
+        for part in fits:
+            batch = pending[part][0]
+            hits = sum(1 for n in names if item_for(batch, n)[0] is not None)
+            if hits > best_hits:
+                best, best_hits = part, hits
+        if best is None:
+            return None
+        batch = pending[best][0]
+        used_all, lines = collect_zip(folder, path, batch, records, moved)
+        append_collected(folder, lines + [{"batch": best[0], "part": best[1], "files": len(names)}])
+        moved.zips += 1
+        if used_all:
+            try:
+                os.unlink(path)
+            except OSError:
+                moved.kept.append(path.name)
+        else:
+            moved.kept.append(path.name)
+        return best
+    # A plain file: Google sends a single video without a zip.
+    for part in fits:
+        batch = pending[part][0]
+        if len(batch["zips"]) != 1 or len(batch["items"]) != 1:
+            continue
+        item = batch["items"][0]
+        stem, ext = split_name(path.name)
+        stem = re.sub(r" \(\d+\)$", "", stem)
+        if item["live"] or fold_name(ext) != item["ext"] or (fold_name(stem) != item["stem"] and item["size"] != size):
+            continue
+        if item["size"] is not None and size != item["size"]:
+            continue
+        target = folder / item["path"]
+        disk = file_size(target)
+        if disk is None:
+            move_plain(path, target)
+            moved.files += 1
+        elif disk != size and known_on_disk(folder, item["path"], records, item["key"], False) is None:
+            moved.problems.append(f"{item['path']} is already in the folder with another size. It was left as it is.")
+            return None
+        else:
+            moved.kept.append(path.name)
+        line = {"mediaKey": item["key"], "path": item["path"], "size": file_size(target) or size,
+                "livePath": None, "liveSize": None}
+        append_collected(folder, [line, {"batch": part[0], "part": part[1], "files": 1}])
+        records[item["key"]] = line
+        moved.zips += 1
+        return part
+    return None
+
+
+def append_collected(folder: Path, lines: List[dict]) -> None:
+    """Adds whole lines to google-collected.jsonl, which only this script writes."""
+    if not lines:
+        return
+    text = "".join(json.dumps(line, ensure_ascii=True, separators=(",", ":")) + "\n" for line in lines)
+    path = state_path(folder, COLLECTED_NAME)
+    with open(path, "a", encoding="ascii", newline="\n") as fh:
+        fh.write(text)
+        fh.flush()
+        os.fsync(fh.fileno())
+
+
+def collect_and_say(folder: Path, places: List[Path], quiet_when_idle: bool = True) -> Tuple[int, int]:
+    """Runs one collection and prints what it did. (zip files still to come, zip files in all)."""
+    try:
+        moved, waiting, total = collect_downloads(folder, places)
+    except OSError as err:
+        say(f"The Downloads folder could not be read ({err.strerror or err}).")
+        return 0, 0
+    if moved.files or moved.zips:
+        say(f"Moved {count(moved.files, 'file')} from {count(moved.zips, 'download')} in the Downloads folder "
+            f"into {folder}.")
+    if moved.kept:
+        say(f"Left in the Downloads folder: {', '.join(moved.kept[:5])}{' ...' if len(moved.kept) > 5 else ''}. "
+            "They hold files that are not in the list, or a file named above did not fit.")
+    for line in moved.problems[:EXAMPLES]:
+        say(line)
+    if total and not places:
+        say("No Downloads folder was found on this computer. Run the command again with --downloads FOLDER, "
+            "the folder where the browser saves downloads.")
+    elif total and not quiet_when_idle:
+        say(f"Zip files from the browser: {total - waiting:,} of {total:,} moved into the folder.")
+    return waiting, total
 
 
 # ----------------------------------------------------------------------------- status
@@ -848,8 +1387,21 @@ def exit_code_for(state: str) -> int:
     return EXIT_RUNNING
 
 
+def zips_still_due(progress: Optional[dict], waiting: int, state: str) -> bool:
+    """Zip files are still to come while the browser script runs, and for 10 minutes after it ends."""
+    if not waiting:
+        return False
+    if state not in END_STATES:
+        return True
+    updated = parse_time(progress.get("updated")) if progress else None
+    if updated is None:
+        return False
+    return (datetime.datetime.now(datetime.timezone.utc) - updated).total_seconds() <= QUIET_SECONDS
+
+
 def cmd_status(args) -> int:
     folder = existing_folder(args.to)
+    places = downloads_folders(getattr(args, "downloads", None))
     wait = max(0.0, float(args.wait or 0))
     deadline = _clock() + wait
     if wait:
@@ -857,10 +1409,12 @@ def cmd_status(args) -> int:
     shown: Optional[tuple] = None
     shown_at = 0.0
     while True:
+        waiting, total = collect_and_say(folder, places)
         progress = read_progress(folder)
         state, lines, signature = describe_progress(progress, folder)
         now = _clock()
-        finished = state in END_STATES or now >= deadline
+        due = zips_still_due(progress, waiting, state)
+        finished = (state in END_STATES and not due) or now >= deadline
         # Print the first look, then a change at most once a minute, and the last change.
         if shown is None or (signature != shown and (finished or now - shown_at >= PRINT_EVERY)):
             for line in lines:
@@ -869,6 +1423,17 @@ def cmd_status(args) -> int:
         if finished:
             break
         _sleep(max(0.0, min(POLL_SECONDS, deadline - now)))
+    if total:
+        say(f"Zip files from the browser: {total - waiting:,} of {total:,} moved into the folder.")
+        if waiting and state in END_STATES and due:
+            say("The browser is still saving the rest in the Downloads folder. Check again in a minute.")
+        elif waiting and state in END_STATES:
+            say(f"{count(waiting, 'zip file')} did not arrive in the Downloads folder. If the browser's download "
+                "list shows a failed download, or the browser blocked downloads from photos.google.com, click "
+                "Start in the panel again: it downloads what is missing. If the browser saves downloads in "
+                "another folder, add --downloads FOLDER to this command.")
+    if due and state in END_STATES:
+        return EXIT_RUNNING
     for line in next_step(state, folder, progress):
         say(line)
     if state not in END_STATES and wait:
@@ -1022,12 +1587,12 @@ def manifest_row(item: Item, path: str, filename: str, size: Optional[int], kind
 
 
 def leftover_pieces(folder: Path) -> int:
-    """Files ending in .crswap: Chrome writes into one while a download runs and renames it when
-    the download ends, so one that is left over is an unfinished download."""
+    """Files ending in .crswap or .homecloud-part: Chrome and this script write into one while a
+    file arrives and rename it when it is complete, so one that is left over is unfinished."""
     n = 0
     for _base, dirs, files in os.walk(folder):
         dirs[:] = [d for d in dirs if d != STATE_DIR]
-        n += sum(1 for f in files if f.lower().endswith(".crswap"))
+        n += sum(1 for f in files if f.lower().endswith((".crswap", PIECE_SUFFIX)))
     return n
 
 
@@ -1067,6 +1632,7 @@ def cmd_verify(args) -> int:
         say(refusal)
         say("Result: NOT CHECKED. This folder holds another script's copy, so nothing was changed.")
         return EXIT_USAGE
+    collect_and_say(folder, downloads_folders(getattr(args, "downloads", None)), quiet_when_idle=False)
     progress = read_progress(folder)
     running = progress is not None and progress.get("state") in RUNNING_STATES
     try:
@@ -1078,12 +1644,14 @@ def cmd_verify(args) -> int:
         say("Result: NOT COMPLETE. There is no list from the browser script to check.")
         return EXIT_FAIL
     records, bad_lines = load_done(folder)
+    records = merge_collected(records, load_collected(folder)[0])
 
     report = Report()
     rows: List[dict] = []
     used: Dict[str, Item] = {}
     ok = stamped = stamp_failed = 0
     live_expected = live_ok = no_video_part = storage_saver = 0
+    video_failed: List[str] = []
     photos = sum(1 for i in items if i.kind == "photo")
     videos = len(items) - photos
     lives = sum(1 for i in items if i.live)
@@ -1136,7 +1704,10 @@ def cmd_verify(args) -> int:
         rows.append(manifest_row(item, path, item.name, disk if status == "done" else expected,
                                  item.kind, status, "original"))
 
-        live_path = (safe_rel(record.get("livePath")) if finished else None) or item.live_path
+        # A Live Photo saved without its video part has a finished line with livePath null.
+        still_only = finished and item.live and "livePath" in record and record.get("livePath") is None
+        live_path = None if still_only else (
+            (safe_rel(record.get("livePath")) if finished else None) or item.live_path)
         live_status = None
         if live_path and path_key(live_path) in used:
             report.add("paths", f"{item.name}, taken {day}: the list puts its video part in the file of "
@@ -1162,6 +1733,8 @@ def cmd_verify(args) -> int:
             rows.append(manifest_row(item, live_path, video_name,
                                      live_disk if live_status == "done" else want,
                                      "live_video", live_status, "live"))
+        elif item.live and status == "done" and record.get("liveError"):
+            video_failed.append(f"{item.name}, taken {day}: {clean_text(record.get('liveError'), 120)}")
         elif item.live:
             no_video_part += 1
 
@@ -1202,6 +1775,11 @@ def cmd_verify(args) -> int:
     if no_video_part:
         say(f"Live Photos without a separate video file: {no_video_part:,}. They are kept as the file Google "
             "gave for them.")
+    if video_failed:
+        say(f"Live Photos saved without their video part, because it did not download: {len(video_failed):,}. "
+            "The photo is complete. A new run of the browser script in this folder tries the video parts again.")
+        for line in video_failed[:EXAMPLES]:
+            say("  " + line)
     problems_file = state_path(folder, PROBLEMS_NAME)
     full: List[str] = []
     for group, title in PROBLEM_TITLES:
@@ -1238,8 +1816,8 @@ def cmd_verify(args) -> int:
             + (f" Could not set {count(stamp_failed, 'file')}." if stamp_failed else ""))
     pieces = leftover_pieces(folder)
     if pieces:
-        say(f"Unfinished download pieces (files ending in .crswap): {pieces:,}. They hold nothing you need. "
-            "Delete them, or leave them; import skips them.")
+        say(f"Unfinished download pieces (files ending in .crswap or {PIECE_SUFFIX}): {pieces:,}. They hold "
+            "nothing you need. Delete them, or leave them; import skips them.")
 
     write_atomic(manifest, "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
     kinds = {k: sum(1 for r in rows if r["kind"] == k) for k in ("photo", "video", "live_video")}
@@ -1722,14 +2300,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lang", help="language of the panel, such as en or de (default: this computer's language)")
     p.set_defaults(func=cmd_prepare)
 
-    p = sub.add_parser("status", help="read-only: the progress of the browser script")
+    downloads_help = ("a folder where the browser saves downloads, if not the system's Downloads folder; "
+                      "may be given more than once")
+    p = sub.add_parser("status", help="the progress of the browser script; moves its zip files from Downloads")
     p.add_argument("--to", required=True, help="the folder for the copy (DIR)")
     p.add_argument("--wait", type=float, default=0, metavar="SECONDS",
                    help="check every 10 seconds until the browser script ends or this many seconds pass")
+    p.add_argument("--downloads", action="append", metavar="FOLDER", help=downloads_help)
     p.set_defaults(func=cmd_status)
 
     p = sub.add_parser("verify", help="check the copy, set file dates, write the manifest for import_library.py")
     p.add_argument("--to", "--dir", dest="to", required=True, help="the folder for the copy (DIR); --dir works too")
+    p.add_argument("--downloads", action="append", metavar="FOLDER", help=downloads_help)
     p.set_defaults(func=cmd_verify)
 
     p = sub.add_parser("takeout", help="Google Takeout: the steps, and the import of its archives with immich-go")

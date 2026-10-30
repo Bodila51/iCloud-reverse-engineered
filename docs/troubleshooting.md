@@ -415,6 +415,10 @@ Nothing was downloaded. `prepare` measured the free space and left a safety marg
 
 Check the internet connection. Then reload the page, paste the script again, and click **Start**. It continues where it stopped. If the panel says that the disk is full, free some space and click **Start**.
 
+### Zip files do not arrive in the Downloads folder
+
+If you clicked **Block** when the browser asked about downloading multiple files, the browser stops the zip files. Click the icon at the left of the address bar, open the site settings for photos.google.com, set **Automatic downloads** to **Allow**, and click **Start** in the panel again. It downloads only what is missing. If your browser saves downloads in another folder, Claude Code adds `--downloads FOLDER` to `status` and `verify`. A zip file that `status` leaves in the Downloads folder holds a file that is not in the list, or one that did not fit, and `status` names it.
+
 ### `status` reports no update for 10 minutes or more
 
 The tab may have closed, or the computer may have slept. Run `prepare` again with the same `DIR` and repeat the steps. The script skips every item that is already there with the right size. Keep the tab open, ideally in front, and the computer awake and plugged in.
