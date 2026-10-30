@@ -9,6 +9,9 @@ It has one part for the iPhone and one for Android, so nobody has to say which p
 Each part shows a code for Tailscale and a code for Immich (the App Store for the iPhone, Google
 Play for Android) and its own numbered steps: five for the iPhone, six for Android. Above both parts
 are the server address in large type and, if you pass --email, your Immich email.
+With an address that is not a Tailscale address, such as the Wi-Fi address that setup.sh
+--no-tailscale passes, the page leaves out the Tailscale code, steps and tip: three steps for the
+iPhone, four for Android.
 --open opens the page in your default browser.
 
 The page holds no password, token or key. The script changes nothing but this one file.
@@ -199,15 +202,20 @@ def sign_in_parts(email):
     return [("t", "Sign in with your Immich email and password.")]
 
 
-def steps(url, email):
-    """The five iPhone steps as lists of (kind, text): "t" plain, "b" a button or app name, "v" a value."""
+def steps(url, email, tailscale=True):
+    """The iPhone steps as lists of (kind, text): "t" plain, "b" a button or app name, "v" a value.
+
+    Five steps, or three without Tailscale, because then the two Tailscale steps are left out.
+    """
     sign_in = sign_in_parts(email)
-    return [
+    first = [
         [("t", "Point the iPhone camera at the Tailscale code, tap the link, and install "),
          ("b", "Tailscale"), ("t", ".")],
         [("t", "Open Tailscale and tap "), ("b", "Get Started"),
          ("t", ". When iOS asks to add a VPN configuration, tap "), ("b", "Allow"),
          ("t", ". Sign in with the same account you use on this computer.")],
+    ] if tailscale else []
+    return first + [
         [("t", "Point the camera at the Immich code, tap the link, and install "), ("b", "Immich"),
          ("t", ".")],
         [("t", "Open Immich and enter the server address "), ("v", url), ("t", ". ")] + sign_in,
@@ -218,26 +226,30 @@ def steps(url, email):
     ]
 
 
-TIPS = [
-    [("t", "When iOS asks about access to your photos, tap "), ("b", "Allow Full Access"),
-     ("t", ". With limited access, Immich sees only the photos you pick.")],
-    [("t", ("Keep Tailscale connected on the iPhone. Away from home, Immich reaches this computer "
-            "only through it."))],
-    [("t", "Keep "), ("b", "Background App Refresh"),
-     ("t", (" on for Immich in Settings > General. iOS decides when background uploads run. "
-            "Opening Immich uploads new photos."))],
-]
+def tips(tailscale=True):
+    """The iPhone tips. Without Tailscale, the one about Tailscale is left out."""
+    access = [("t", "When iOS asks about access to your photos, tap "), ("b", "Allow Full Access"),
+              ("t", ". With limited access, Immich sees only the photos you pick.")]
+    connected = [("t", ("Keep Tailscale connected on the iPhone. Away from home, Immich reaches this "
+                        "computer only through it."))]
+    refresh = [("t", "Keep "), ("b", "Background App Refresh"),
+               ("t", (" on for Immich in Settings > General. iOS decides when background uploads run. "
+                      "Opening Immich uploads new photos."))]
+    return [access, connected, refresh] if tailscale else [access, refresh]
 
 
-def android_steps(url, email):
-    """The six Android steps, in the same form as steps(). Steps 1 to 5 match the iPhone numbers."""
-    return [
+def android_steps(url, email, tailscale=True):
+    """The Android steps, in the same form as steps(): six, or four without the two Tailscale steps.
+    Every step but the last has the same number as on the iPhone."""
+    first = [
         [("t", "Point the phone camera at the Tailscale code, tap the link, and install "),
          ("b", "Tailscale"), ("t", " from Google Play.")],  # [G1]
         [("t", "Open Tailscale and tap "), ("b", "Get Started"),
          ("t", ". Tap "), ("b", "Connect"), ("t", " if you see it, and tap "), ("b", "OK"),
          ("t", " when Android asks to set up a VPN connection. Then tap "), ("b", "Log in"),
          ("t", " and sign in with the same account you use on this computer.")],  # [G3]
+    ] if tailscale else []
+    return first + [
         [("t", "Point the camera at the Immich code, tap the link, and install "), ("b", "Immich"),
          ("t", " from Google Play.")],  # [G2]
         [("t", "Open Immich and enter the server address "), ("v", url), ("t", ". ")] + sign_in_parts(email),
@@ -253,19 +265,21 @@ def android_steps(url, email):
     ]
 
 
-ANDROID_TIPS = [
-    [("t", ("When Android asks about your photos and videos, allow access to all of them. "
-            "If you pick only some, Immich sees only those."))],
-    [("t", ("Keep Tailscale connected on the phone. Away from home, Immich reaches this computer "
-            "only through it."))],
-    [("t", ("Phone makers differ in how much they limit apps in the background, and the battery menu can "
-            "have another name, such as ")), ("b", "App battery usage"),
-     ("t", ". If you cannot find the setting, tap the battery link in Immich. Its "), ("b", "Show me how"),
-     ("t", " button opens dontkillmyapp.com, a guide for each maker.")],
-    [("t", ("When notifications and battery use are allowed, the two links at the bottom of the Backup "
-            "screen go away. Android decides when background uploads run. Opening Immich uploads new "
-            "photos."))],
-]
+def android_tips(tailscale=True):
+    """The Android tips. Without Tailscale, the one about Tailscale is left out."""
+    access = [("t", ("When Android asks about your photos and videos, allow access to all of them. "
+                     "If you pick only some, Immich sees only those."))]
+    connected = [("t", ("Keep Tailscale connected on the phone. Away from home, Immich reaches this computer "
+                        "only through it."))]
+    maker = [("t", ("Phone makers differ in how much they limit apps in the background, and the battery menu "
+                    "can have another name, such as ")), ("b", "App battery usage"),
+             ("t", ". If you cannot find the setting, tap the battery link in Immich. Its "), ("b", "Show me how"),
+             ("t", " button opens dontkillmyapp.com, a guide for each maker.")]
+    links = [("t", ("When notifications and battery use are allowed, the two links at the bottom of the Backup "
+                    "screen go away. Android decides when background uploads run. Opening Immich uploads new "
+                    "photos."))]
+    return [access, connected, maker, links] if tailscale else [access, maker, links]
+
 
 NUMBER_WORDS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
 
@@ -273,33 +287,43 @@ NUMBER_WORDS = ("no", "one", "two", "three", "four", "five", "six", "seven", "ei
 def phones(url, email):
     """The two parts of the page, in page order: the iPhone first, then Android.
 
-    The page and the text both read from this list. Step 1 and step 3 are the two codes, and step 4
-    is where the server address goes, in both parts.
+    The page and the text both read from this list. With a Tailscale address, step 1 and step 3 are
+    the two codes, and step 4 is where the server address goes, in both parts. With any other
+    address, such as the Wi-Fi address that setup.sh --no-tailscale passes, the Tailscale code, steps
+    and tip are left out: step 1 is the Immich code, and step 2 is where the address goes.
     """
-    iphone = steps(url, email)
-    android = android_steps(url, email)
+    tailscale = via_tailscale(url)
+    iphone = steps(url, email, tailscale)
+    android = android_steps(url, email, tailscale)
+    if tailscale:
+        iphone_apps = [("Step 1", "Tailscale", TAILSCALE_APP_URL), ("Step 3", "Immich", IMMICH_APP_URL)]
+        android_apps = [("Step 1", "Tailscale", TAILSCALE_PLAY_URL), ("Step 3", "Immich", IMMICH_PLAY_URL)]
+    else:
+        iphone_apps = [("Step 1", "Immich", IMMICH_APP_URL)]
+        android_apps = [("Step 1", "Immich", IMMICH_PLAY_URL)]
+    codes = "each code" if tailscale else "the code"
     return [
         {
             "id": "iphone",
             "name": "iPhone",
-            "intro": "Scan each code with the iPhone camera, then follow the %s steps." % NUMBER_WORDS[len(iphone)],
+            "intro": "Scan %s with the iPhone camera, then follow the %s steps." % (codes, NUMBER_WORDS[len(iphone)]),
             "store": "the App Store",
             "codes_label": "App Store codes",
-            "apps": [("Step 1", "Tailscale", TAILSCALE_APP_URL), ("Step 3", "Immich", IMMICH_APP_URL)],
+            "apps": iphone_apps,
             "steps_title": "On your iPhone",
             "steps": iphone,
-            "tips": TIPS,
+            "tips": tips(tailscale),
         },
         {
             "id": "android",
             "name": "Android",
-            "intro": "Scan each code with the phone camera, then follow the %s steps." % NUMBER_WORDS[len(android)],
+            "intro": "Scan %s with the phone camera, then follow the %s steps." % (codes, NUMBER_WORDS[len(android)]),
             "store": "Google Play",
             "codes_label": "Google Play codes",
-            "apps": [("Step 1", "Tailscale", TAILSCALE_PLAY_URL), ("Step 3", "Immich", IMMICH_PLAY_URL)],
+            "apps": android_apps,
             "steps_title": "On your Android phone",
             "steps": android,
-            "tips": ANDROID_TIPS,
+            "tips": android_tips(tailscale),
         },
     ]
 
@@ -464,8 +488,9 @@ def render_html(url, email, today=None):
             '\n      <p class="label">Your Immich email</p>\n'
             '      <p class="email">%s</p>' % esc(email)
         )
+    tailscale = via_tailscale(url)
     note = ""
-    if via_tailscale(url):
+    if tailscale:
         note = '\n      <p class="note">Your phone reaches this address only while Tailscale is connected.</p>'
     return """<!doctype html>
 <html lang="en">
@@ -486,7 +511,7 @@ def render_html(url, email, today=None):
   </nav>
 
   <section class="card address" aria-label="Server address">
-      <p class="label">Server address for the Immich app (step 4)</p>
+      <p class="label">Server address for the Immich app (step {step})</p>
       <p class="big">{url}</p>{email_block}{note}
   </section>
 
@@ -500,6 +525,7 @@ def render_html(url, email, today=None):
         style=STYLE,
         jump="\n".join('    <a href="#%s">%s</a>' % (part["id"], esc(part["name"])) for part in parts),
         url=esc(url),
+        step=4 if tailscale else 2,
         email_block=email_block,
         note=note,
         sections="\n\n".join(phone_html(part) for part in parts),
@@ -538,7 +564,7 @@ def open_page(path):
 
 
 def text_steps(url, email):
-    """The steps for each phone, then the address, the email and the four store links."""
+    """The steps for each phone, then the address, the email and the store links."""
     parts = phones(url, email)
     lines = []
     for part in parts:

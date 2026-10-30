@@ -210,14 +210,17 @@ Only your user account on this computer can read it."""
 
 SIGN_OUT_QUESTION = "Everything is here. Sign out of iCloud and delete the session key now? [Y/n] "
 
+NOT_SIGNED_OUT = "NOT SIGNED OUT: the session key is still on this computer."
+
 NEEDS_PACKAGES = """This command needs Python 3.10 or newer with the packages in
 scripts/requirements.txt. This is Python {version}{missing}.
 If you have no Python 3.10 or newer, install one from python.org first.
 Then, once, from the kit folder:
-    python3.12 -m venv .venv
-    .venv/bin/python -m pip install -r scripts/requirements.txt
-and run this script with .venv/bin/python instead of python3.
-On Windows: py -3.12 -m venv .venv, then use .venv\\Scripts\\python.exe."""
+    {make}
+    {python} -m pip install -r scripts/requirements.txt
+and run this script with {python} instead of {plain}.{note}"""
+
+AMPERSAND_NOTE = "In PowerShell, put & in front of a command that starts with a quoted path."
 
 
 # --------------------------------------------------------------------------
@@ -3124,7 +3127,8 @@ def cmd_verify(args, out=None, ask=None, service_factory=None):
         # the result as the last line.
         out.line("Everything is here. Signing out of iCloud and deleting the session key "
                  "(use --keep-session to keep it).")
-        sign_out(out, service_factory)
+        if sign_out(out, service_factory) != EXIT_OK:
+            out.line(NOT_SIGNED_OUT)
         out.line(final)
         return code
     out.line(final)
@@ -3135,7 +3139,8 @@ def cmd_verify(args, out=None, ask=None, service_factory=None):
         out.line("")
         answer = "n"
     if (answer or "").strip().lower() in ("", "y", "yes"):
-        sign_out(out, service_factory)
+        if sign_out(out, service_factory) != EXIT_OK:
+            out.line(NOT_SIGNED_OUT)
     else:
         out.line("The session key stays on this computer. To sign out later, run:  "
                  "python3 scripts/icloud.py logout")
@@ -3375,6 +3380,23 @@ def end_session_at_apple(service_factory=None):
     return "confirmed" if "confirmed" in results else "ended"
 
 
+def venv_python():
+    """The Python of the kit's virtual environment in the home folder, written as README.md's
+    Do it by hand section writes it. Git Bash and PowerShell both read the Windows form."""
+    if os.name == "nt":
+        return '"$HOME/homecloud-venv/Scripts/python.exe"'
+    return "~/homecloud-venv/bin/python"
+
+
+def needs_packages(version, missing):
+    """The message for login, scan and download under a Python without the packages."""
+    windows = os.name == "nt"
+    return NEEDS_PACKAGES.format(
+        version=version, missing=missing, python=venv_python(),
+        make='py -m venv "$HOME/homecloud-venv"' if windows else "python3 -m venv ~/homecloud-venv",
+        plain="py" if windows else "python3", note="\n" + AMPERSAND_NOTE if windows else "")
+
+
 def sign_out(out, service_factory=None):
     if not saved_session_files():
         out.line("No iCloud session is saved on this computer. There is nothing to sign out.")
@@ -3384,7 +3406,9 @@ def sign_out(out, service_factory=None):
         out.line("This Python cannot talk to iCloud: it needs Python 3.10 or newer with the packages "
                  "in scripts/requirements.txt. Nothing was deleted.")
         out.line("Run logout with the Python of the kit's virtual environment, for example:")
-        out.line("    .venv/bin/python scripts/icloud.py logout")
+        out.line("    %s scripts/icloud.py logout" % venv_python())
+        if os.name == "nt":
+            out.line(AMPERSAND_NOTE)
         return EXIT_FAIL
     folder = session_dir()
     removed = forget_session()
@@ -3534,7 +3558,7 @@ def main(argv=None):
             except Exception:
                 missing = ", without the packages"
         if sys.version_info < (3, 10) or missing:
-            OUT.line(NEEDS_PACKAGES.format(version="%d.%d" % sys.version_info[:2], missing=missing))
+            OUT.line(needs_packages("%d.%d" % sys.version_info[:2], missing))
             return EXIT_FAIL
     try:
         return args.func(args)

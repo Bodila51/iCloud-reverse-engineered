@@ -297,7 +297,7 @@ Use a new folder for `DIR`, apart from any iCloud copy. The browser does not let
 4. Follow the progress, then check every file. `status` exits with 0 when the download is done, 4 while it still runs or has not started, and 1 when it failed or was stopped. On Windows, leave out `caffeinate -i`.
 
    ```
-   caffeinate -i python3 scripts/google/google_photos.py status --to DIR --wait 300
+   caffeinate -i python3 scripts/google/google_photos.py status --to DIR --wait 100
    python3 scripts/google/google_photos.py verify --to DIR
    ```
 
@@ -473,6 +473,7 @@ Homecloud uses these projects:
 - [pyicloud](https://github.com/timlaing/pyicloud), for the iCloud.com sign-in and download in Path A.
 - [osxphotos](https://github.com/RhetTbull/osxphotos), for copying photos out of the Photos library on a Mac.
 - [pymobiledevice3](https://github.com/doronz88/pymobiledevice3), for copying photos from an iPhone over USB. It is under the GPL-3.0 license, and the kit installs it from PyPI as a separate package.
+- [Google Photos Toolkit](https://github.com/xob0t/Google-Photos-Toolkit) by xob0t, for the Google Photos web requests in Path G. The browser script copies its request formats and response parsing, under its MIT license.
 - [immich-go](https://github.com/simulot/immich-go), for importing Google Takeout archives into Immich in the Takeout route.
 - [Docker](https://www.docker.com), which runs Immich.
 - [QR Code generator library](https://www.nayuki.io/page/qr-code-generator-library) by Project Nayuki, for the QR codes on the phone page. It is under the MIT license, in `scripts/vendor/`.

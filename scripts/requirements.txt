@@ -2,18 +2,20 @@
 #
 # pyicloud 2026.10.1 needs Python 3.10 or newer. The python3 that comes with
 # macOS is 3.9, so install a newer Python from python.org first. Then, from
-# the kit folder, make a virtual environment and install these packages there:
+# the kit folder, make a virtual environment in your home folder and install
+# these packages there:
 #
-#     python3.12 -m venv .venv
-#     .venv/bin/python -m pip install -r scripts/requirements.txt
+#     python3 -m venv ~/homecloud-venv
+#     ~/homecloud-venv/bin/python -m pip install -r scripts/requirements.txt
 #
-# On Windows:
+# On Windows, in PowerShell put & in front of the second line:
 #
-#     py -3.12 -m venv .venv
-#     .venv\Scripts\python.exe -m pip install -r scripts\requirements.txt
+#     py -m venv "$HOME/homecloud-venv"
+#     "$HOME/homecloud-venv/Scripts/python.exe" -m pip install -r scripts/requirements.txt
 #
-# Any Python from 3.10 on works in place of 3.12. Then run the script with
-# that Python, for example: .venv/bin/python scripts/icloud.py --help
+# Then run the script with that Python, for example:
+#
+#     ~/homecloud-venv/bin/python scripts/icloud.py --help
 #
 # Every package is pinned to an exact version and checked by hash, for macOS
 # (Apple silicon and Intel), Windows and Linux. Made with:

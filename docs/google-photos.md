@@ -57,10 +57,10 @@ Claude Code runs the commands, and you do steps 2 and 3 in your browser. The com
 4. While it works, Claude Code reads the progress now and then:
 
    ```
-   python3 scripts/google/google_photos.py status --to DIR --wait 300
+   python3 scripts/google/google_photos.py status --to DIR --wait 100
    ```
 
-   With `--wait 300`, `status` checks every 10 seconds, for up to 300 seconds, and returns as soon as the script ends. Exit code 0 means done, 4 means still running or not started yet, and 1 means the script failed or was stopped. If nothing has changed for 10 minutes, it asks whether the tab is still open. On a Mac, Claude Code puts `caffeinate -i` in front, so the Mac stays awake while it waits.
+   With `--wait 100`, `status` checks every 10 seconds, for up to 100 seconds, and returns as soon as the script ends. Exit code 0 means done, 4 means still running or not started yet, and 1 means the script failed or was stopped. If nothing has changed for 10 minutes, it asks whether the tab is still open. On a Mac, Claude Code puts `caffeinate -i` in front, so the Mac stays awake while it waits.
 
 5. When the panel says **Done**, Claude Code checks the files and imports them into Immich:
 

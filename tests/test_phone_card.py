@@ -28,6 +28,7 @@ def load(name, rel):
 pc = load("phone_card", "scripts/phone_card.py")
 
 URL = "http://100.101.102.103:2283"
+WIFI_URL = "http://192.168.1.20:2283"  # what setup.sh --no-tailscale passes: not a Tailscale address
 TS_APP = "https://apps.apple.com/app/tailscale/id1470499037"
 IMMICH_APP = "https://apps.apple.com/app/immich/id1613945652"
 TS_PLAY = "https://play.google.com/store/apps/details?id=com.tailscale.ipn"
@@ -35,8 +36,8 @@ IMMICH_PLAY = "https://play.google.com/store/apps/details?id=app.alextran.immich
 ALL_LINKS = (TS_APP, IMMICH_APP, TS_PLAY, IMMICH_PLAY)  # the order of the codes on the page
 
 
-def make_card(homecloud_home, capsys, *extra):
-    assert pc.main(["--url", URL + "/", *extra]) == 0
+def make_card(homecloud_home, capsys, *extra, url=URL):
+    assert pc.main(["--url", url + "/", *extra]) == 0
     page = (homecloud_home / "phone.html").read_text(encoding="utf-8")
     return page, capsys.readouterr().out
 
@@ -190,6 +191,38 @@ def test_text_output_has_the_steps_of_both_phones_and_the_four_links(homecloud_h
                  "Tailscale in Google Play: " + TS_PLAY, "Immich in Google Play: " + IMMICH_PLAY):
         assert line in lines
     assert lines[-1] == "Saved: " + str(homecloud_home / "phone.html")
+
+
+def test_without_a_tailscale_address_the_tailscale_code_steps_and_tips_are_left_out(homecloud_home, capsys):
+    page, out = make_card(homecloud_home, capsys, "--email", "jane@example.com", url=WIFI_URL)
+
+    assert "Tailscale" not in page and "Tailscale" not in out  # no code, step, tip or note about it
+    assert TS_APP not in page + out and TS_PLAY not in page + out
+    q = pc.QUIET_ZONE
+    grids = svg_matrices(page)
+    assert [[row[q:-q] for row in grid[q:-q]] for grid in grids] == [pc.qr_matrix(IMMICH_APP),
+                                                                     pc.qr_matrix(IMMICH_PLAY)]
+    assert re.findall(r'<span class="tag">(Step \d)</span>', page) == ["Step 1", "Step 1"]
+    assert '<p class="big">%s</p>' % WIFI_URL in page and "(step 2)" in page and "(step 4)" not in page
+
+    iphone = [plain(item) for item in step_items(part(page, "iphone"))]
+    android = [plain(item) for item in step_items(part(page, "android"))]
+    assert len(iphone) == 3 and len(android) == 4
+    assert "install Immich." in iphone[0] and "install Immich from Google Play." in android[0]
+    assert all(WIFI_URL in step[1] and "jane@example.com" in step[1] for step in (iphone, android))
+    assert "Recents" in iphone[2] and "Camera" in android[2] and "Unrestricted" in android[3]
+    assert "follow the three steps" in part(page, "iphone") and "follow the four steps" in part(page, "android")
+    for name, kept in (("iphone", ("Allow Full Access", "Background App Refresh")),
+                       ("android", ("allow access to all", "dontkillmyapp.com"))):
+        tips = plain(re.search(r'<ul class="tips">(.*?)</ul>', part(page, name), re.S).group(1))
+        assert all(words in tips for words in kept)
+
+    iphone_text = out.split("On your iPhone:\n", 1)[1].split("\n\n", 1)[0]
+    android_text = out.split("On your Android phone:\n", 1)[1].split("\n\n", 1)[0]
+    assert re.findall(r"^  (\d+)\. ", iphone_text, re.M) == ["1", "2", "3"]
+    assert re.findall(r"^  (\d+)\. ", android_text, re.M) == ["1", "2", "3", "4"]
+    lines = out.splitlines()
+    assert "Immich in the App Store: " + IMMICH_APP in lines and "Immich in Google Play: " + IMMICH_PLAY in lines
 
 
 @pytest.mark.parametrize("extra", [(), ("--email", "jane@example.com")])

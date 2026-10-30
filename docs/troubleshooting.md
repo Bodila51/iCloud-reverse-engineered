@@ -1,6 +1,6 @@
 # Fix common problems
 
-Find the step where you got stuck, then the symptom. The commands use `python3`. On Windows, type `py` instead. Run them from the kit folder. The Offline vault script also needs the kit's virtual environment active, as [README.md](../README.md#do-it-by-hand) shows.
+Find the step where you got stuck, then the symptom. The commands use `python3`. On Windows, type `py` instead. Run them from the kit folder. The Path A script and the Offline vault script also need the kit's virtual environment, as [README.md](../README.md#do-it-by-hand) shows.
 
 ## Downloading with Photos on a Mac
 

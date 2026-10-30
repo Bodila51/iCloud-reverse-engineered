@@ -1290,6 +1290,41 @@ def test_verify_signs_out_by_itself_when_nobody_can_answer(tmp_path, homecloud_h
     assert (homecloud_home / "immich-api-key").exists()
 
 
+def test_verify_says_not_signed_out_when_this_python_cannot_sign_out(tmp_path, homecloud_home, monkeypatch):
+    cloud = F.FakeICloud(F.sample_library())
+    root = tmp_path / "photos"
+    assert download(F.make_bundle(cloud), root)[0] == 0
+    save_fake_session(homecloud_home)
+    monkeypatch.setattr(icloud, "end_session_at_apple", lambda service_factory=None: "no_packages")
+
+    rc, text, asked, apis = verify_with_answer(root, "y")
+    assert rc == 0 and asked == [icloud.SIGN_OUT_QUESTION]  # the exit code stays the N of N result
+    assert "Nothing was deleted." in text and icloud.NOT_SIGNED_OUT in text
+    assert icloud.venv_python() + " scripts/icloud.py logout" in text
+    assert "Signed out of iCloud." not in text and "Deleted the session key" not in text
+
+    monkeypatch.setattr(icloud, "_stdin_is_tty", lambda: False)
+    args = icloud.build_parser().parse_args(["verify", "--to", str(root)])
+    out = new_out()
+    assert icloud.cmd_verify(args, out) == 0
+    lines = text_of(out).strip().splitlines()
+    assert lines[-2] == icloud.NOT_SIGNED_OUT and lines[-1].startswith("VERIFIED 15 of 15 files")
+    assert icloud.saved_session_files()
+
+
+@pytest.mark.parametrize("system, make, python", [
+    ("posix", "python3 -m venv ~/homecloud-venv", "~/homecloud-venv/bin/python"),
+    ("nt", 'py -m venv "$HOME/homecloud-venv"', '"$HOME/homecloud-venv/Scripts/python.exe"'),
+])
+def test_package_message_names_the_virtual_environment_of_the_readme(system, make, python, monkeypatch):
+    monkeypatch.setattr(icloud.os, "name", system)
+    text = icloud.needs_packages("3.9", "")
+    assert "    %s\n    %s -m pip install -r scripts/requirements.txt\n" % (make, python) in text
+    assert "run this script with %s instead of " % python in text and icloud.venv_python() == python
+    assert ".venv" not in text and "3.12" not in text
+    assert ("put & in front" in text) == (system == "nt")
+
+
 def test_verify_does_not_offer_after_a_partial_download(tmp_path, homecloud_home):
     cloud = F.FakeICloud(F.sample_library())
     root = tmp_path / "photos"
