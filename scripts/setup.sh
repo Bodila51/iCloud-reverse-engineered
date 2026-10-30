@@ -9,6 +9,9 @@
 #                      auto (the default) turns it off when Docker has less than about 5.5 GB,
 #                      as on a Mac with 8 GB of memory.
 #   --app-dir DIR      folder for Immich's files (default ~/immich-app)
+#   --upload-location DIR  folder for Immich's copy of every photo, such as a folder on an
+#                      external drive that stays connected (default APP_DIR/library), passed
+#                      on to scripts/immich/setup_mac.sh. The database stays on this Mac's disk.
 #   --no-tailscale     skip Tailscale. The phone card then uses this Mac's Wi-Fi address.
 #
 # Steps (a second run skips what is done)
@@ -47,6 +50,7 @@ set -euo pipefail
 YES=0
 ML=auto
 APP_DIR_ARG=""
+UPLOAD_ARG=""
 TAILSCALE=1
 IMMICH_URL="http://localhost:2283"
 PING_URL="http://127.0.0.1:2283/api/server/ping"
@@ -65,7 +69,7 @@ QUIT_WAIT=${HOMECLOUD_QUIT_WAIT:-90}
 POLL=${HOMECLOUD_POLL:-3}
 
 say() { printf '%s\n' "$*"; }
-usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; }
 bad_usage() { printf '%s\n' "$1" >&2; exit 2; }
 fail() {  # fail "one plain sentence for the person" [exit code]
   say ""
@@ -81,6 +85,8 @@ while [ $# -gt 0 ]; do
     --ml=*) ML=${1#*=} ;;
     --app-dir) [ $# -ge 2 ] || bad_usage "--app-dir needs a folder."; APP_DIR_ARG=$2; shift ;;
     --app-dir=*) APP_DIR_ARG=${1#*=} ;;
+    --upload-location) [ $# -ge 2 ] || bad_usage "--upload-location needs a folder."; UPLOAD_ARG=$2; shift ;;
+    --upload-location=*) UPLOAD_ARG=${1#*=} ;;
     --no-tailscale) TAILSCALE=0 ;;
     -h|--help) usage; exit 0 ;;
     *) bad_usage "Unknown option: $1 (see --help)" ;;
@@ -106,6 +112,14 @@ if [ -n "$APP_DIR_ARG" ]; then
   APP_DIR=$APP_DIR_ARG
 else
   APP_DIR="$HOME/immich-app"  # the default of scripts/immich/setup_mac.sh
+fi
+if [ -n "$UPLOAD_ARG" ]; then
+  UPLOAD_ARG=$(absolute_path "$UPLOAD_ARG")
+  case "$UPLOAD_ARG" in
+    /Volumes/*)
+      vol=$(printf '%s\n' "$UPLOAD_ARG" | cut -d/ -f1-3)
+      [ -d "$vol" ] || fail "The drive $vol is not connected, so connect it and run this setup again." 2 ;;
+  esac
 fi
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -461,6 +475,13 @@ if [ "$IMMICH" = running ] && [ "$PY_OK" = 1 ] && EMAIL=$(immich_email); then SK
 say "  macOS ${macos:-unknown} on a Mac with $CHIP"
 say "  Memory: $(gib "$RAM_MIB") GB"
 say "  Free space on the disk with your home folder: $FREE_GB GB"
+if [ -n "$UPLOAD_ARG" ]; then
+  up=$UPLOAD_ARG
+  while [ ! -d "$up" ] && [ "$up" != / ]; do up=$(dirname "$up"); done
+  up_kb=$(df -Pk "$up" 2>/dev/null | awk 'NR == 2 { print $4 }')
+  case "$up_kb" in ''|*[!0-9]*) up_kb=0 ;; esac
+  say "  Free space where Immich will keep your photos ($UPLOAD_ARG): $((up_kb / 1000000)) GB"
+fi
 if [ "$PY_OK" = 1 ]; then say "  Python: $PY_VERSION"; else say "  Python: missing (python3 3.9 or newer is needed)"; fi
 case "$DSTATE" in
   running) if [ "$MEM_NOW" -gt 0 ]; then say "  Docker: running, with $(gib "$MEM_NOW") GB of memory"; else say "  Docker: running"; fi ;;
@@ -533,7 +554,10 @@ if [ "$DSTATE" != running ]; then say "  - Start Docker Desktop and wait until i
 if [ "$SKIP_IMMICH" = 1 ]; then
   say "  - Immich already runs. Nothing to do."
 else
-  say "  - Install or start Immich: bash $SETUP_IMMICH --yes --ml $ML${APP_DIR_ARG:+ --app-dir $APP_DIR_ARG}"
+  say "  - Install or start Immich: bash $SETUP_IMMICH --yes --ml $ML${APP_DIR_ARG:+ --app-dir $APP_DIR_ARG}${UPLOAD_ARG:+ --upload-location \"$UPLOAD_ARG\"}"
+fi
+if [ -n "$UPLOAD_ARG" ] && [ "$IMMICH" != none ]; then
+  say "    --upload-location applies only to a new Immich. This one keeps its photos where it was set up."
 fi
 if [ "$SKIP_BOOTSTRAP" = 1 ]; then
   say "  - Check your Immich account and API key: python3 $BOOTSTRAP. The saved key works, so no window opens."
@@ -620,6 +644,7 @@ if [ "$SKIP_IMMICH" = 1 ]; then
 else
   set -- --yes --ml "$ML"
   if [ -n "$APP_DIR_ARG" ]; then set -- "$@" --app-dir "$APP_DIR_ARG"; fi
+  if [ -n "$UPLOAD_ARG" ]; then set -- "$@" --upload-location "$UPLOAD_ARG"; fi
   bash "$SETUP_IMMICH" "$@" \
     || fail "Immich did not start, so read the message above, fix what it names and run this setup again."
 fi

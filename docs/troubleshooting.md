@@ -210,7 +210,7 @@ python3 scripts/immich/import_library.py save-key
 
 ### The import says there is not enough free space
 
-The import copies every file into Immich's library folder. The computer needs room for your library twice, plus about a fifth for thumbnails and video previews. Free up space, or use a bigger drive for Immich's library folder. That folder is the `UPLOAD_LOCATION` line in the `.env` file in the Immich folder. If Immich holds no photos yet, change that line, then run `docker compose up -d` in the Immich folder. [scripts/immich/README.md](../scripts/immich/README.md) also describes an External Library, which reads the files where they are.
+The import copies every file into Immich's library folder. The computer needs room for your library twice, plus about a fifth for thumbnails and video previews. Free up space, or use a bigger drive for Immich's library folder. For a new Immich, the setup takes that folder as `--upload-location FOLDER` on a Mac or `-UploadLocation FOLDER` on Windows. That folder is the `UPLOAD_LOCATION` line in the `.env` file in the Immich folder. If Immich holds no photos yet, change that line, then run `docker compose up -d` in the Immich folder. [scripts/immich/README.md](../scripts/immich/README.md) also describes an External Library, which reads the files where they are.
 
 ### Immich shows a different number than the export
 

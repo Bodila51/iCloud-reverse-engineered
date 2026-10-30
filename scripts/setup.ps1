@@ -10,6 +10,8 @@ Options
   -Ml auto|on|off  Immich machine learning, passed to scripts\immich\setup_windows.ps1 (default auto:
                    off when Docker has less than about 5.5 GB of memory, as on a PC with 8 GB)
   -AppDir DIR      folder for Immich's files and photo library (default %USERPROFILE%\immich-app)
+  -UploadLocation DIR  folder for Immich's copy of every photo, such as a folder on an external
+                   drive that stays connected (default AppDir\library). The database stays in AppDir.
   -NoTailscale     skip Tailscale and the phone page, for example in Offline vault mode
 
 What it does, in this order. A second run skips each step that is already done.
@@ -65,6 +67,7 @@ param(
     [switch]$Yes,
     [ValidateSet('auto', 'on', 'off')][string]$Ml = 'auto',
     [string]$AppDir = '',
+    [string]$UploadLocation = '',
     [switch]$NoTailscale
 )
 
@@ -737,6 +740,7 @@ function Main {
             $again = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-Ml', $Ml)
             if ($Yes) { $again += '-Yes' }
             if ($AppDir) { $again += @('-AppDir', $AppDir) }
+            if ($UploadLocation) { $again += @('-UploadLocation', $UploadLocation) }
             if ($NoTailscale) { $again += '-NoTailscale' }
             & $winPs @again
             exit $LASTEXITCODE
@@ -756,6 +760,13 @@ function Main {
     if (-not $AppDir) { $AppDir = Join-Path $env:USERPROFILE 'immich-app' }   # setup_windows.ps1 default
     $AppDir = Get-AbsolutePath $AppDir
     $composeFile = Join-Path $AppDir 'docker-compose.yml'
+    if ($UploadLocation) {
+        $UploadLocation = Get-AbsolutePath $UploadLocation
+        $uploadRoot = [System.IO.Path]::GetPathRoot($UploadLocation)
+        if (-not $uploadRoot -or -not (Test-Path -LiteralPath $uploadRoot)) {
+            Stop-Setup "The drive $uploadRoot is not connected, so connect it and run this again." 2
+        }
+    }
 
     $needed = @($immichSetup, $bootstrap)
     if (-not $NoTailscale) { $needed += @($tailscaleSetup, $phoneCard) }
@@ -807,6 +818,10 @@ function Main {
     $appRoot = [System.IO.Path]::GetPathRoot($AppDir)
     if ($freeSystem -ge 0) { Say ("  Free space on drive {0} {1} GB" -f $systemRoot.TrimEnd('\'), (Format-GB $freeSystem)) }
     if ($appRoot -ne $systemRoot -and $freeApp -ge 0) { Say ("  Free space on drive {0} (Immich's folder): {1} GB" -f $appRoot.TrimEnd('\'), (Format-GB $freeApp)) }
+    if ($UploadLocation) {
+        $freeUpload = Get-FreeBytes $UploadLocation
+        if ($freeUpload -ge 0) { Say ("  Free space on drive {0} (Immich's photos): {1} GB" -f $uploadRoot.TrimEnd('\'), (Format-GB $freeUpload)) }
+    }
 
     $hypervisor = Get-Prop $cs 'HypervisorPresent'
     $firmwareVt = Get-Prop $cpu 'VirtualizationFirmwareEnabled'
@@ -888,11 +903,15 @@ function Main {
         $n++
     }
     if (-not $dockerUp) { Say "  $n. Start Docker Desktop and wait until it runs."; $n++ }
-    if ($immichThere) { Say "  $n. Start Immich from $AppDir (scripts\immich\setup_windows.ps1 -Yes -Ml $Ml)." }
+    $photoDir = if ($UploadLocation) { $UploadLocation } else { Join-Path $AppDir 'library' }
+    if ($immichThere) {
+        Say "  $n. Start Immich from $AppDir (scripts\immich\setup_windows.ps1 -Yes -Ml $Ml)."
+        if ($UploadLocation) { Say '     -UploadLocation applies only to a new Immich. This one keeps its photos where it was set up.' }
+    }
     else {
         Say "  $n. Install Immich in $AppDir and start it (scripts\immich\setup_windows.ps1 -Yes -Ml $Ml)."
         Say '     It downloads Immich''s files from GitHub and about 1 GB of programs. Immich keeps its own copy'
-        Say "     of every photo in $AppDir\library, so that drive needs room for your whole library."
+        Say "     of every photo in $photoDir, so that drive needs room for your whole library."
     }
     $n++
     Say "  $n. Create your Immich account and an API key (scripts\immich\bootstrap.py). A Windows window asks"
@@ -937,6 +956,7 @@ function Main {
     Say 'Setting up Immich (scripts\immich\setup_windows.ps1)...'
     $immichArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $immichSetup, '-Yes', '-Ml', $Ml)
     if ($appDirGiven) { $immichArgs += @('-AppDir', $AppDir) }
+    if ($UploadLocation) { $immichArgs += @('-UploadLocation', $UploadLocation) }
     & $psExe @immichArgs
     $code = $LASTEXITCODE
     if ($code -ne 0) {
