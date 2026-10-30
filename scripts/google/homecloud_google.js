@@ -23,7 +23,9 @@
  * makeApiRequest(), which refuses any request id that is not in
  * READ_ONLY_RPCS, so nothing in Google Photos is changed. It talks only to
  * photos.google.com and to the media addresses that photos.google.com
- * returns. It never reads, prints or stores cookies, tokens or download links.
+ * returns. It never reads cookies. It reads the page's own request tokens from
+ * WIZ_global_data, as the page does, sends them only to photos.google.com, and
+ * never prints or stores them or any download link.
  *
  * Download methods, tried in this order on the first items:
  *   item-url  The item info request VrseUb returns downloadOriginalUrl,

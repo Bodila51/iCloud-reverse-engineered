@@ -384,7 +384,7 @@ Press Cmd+Option+J on a Mac or Ctrl+Shift+J on Windows while the Google Photos t
 
 ### The console does not let you paste
 
-The first time, the browser blocks the paste and shows a warning that asks you to type `allow pasting`. If your browser uses another language, the words are in that language. Type exactly what it shows, press Enter, then paste again and press Enter. The warning is there because scammers tell people to paste code into the console. Paste only the script that `prepare` made.
+The first time, the browser blocks the paste and shows a warning that asks you to type `allow pasting`. If your browser uses another language, the words are in that language. Type exactly what it shows, press Enter, then paste again and press Enter. The warning is there because scammers tell people to paste code into the console. Paste only the script that `prepare` made. Typing it switches the warning off in this browser profile. When the move is done, switch it back on: in DevTools, click the gear icon at the top right, and at the bottom of **Preferences** click **Restore defaults and reload**. This also resets any other DevTools setting you changed.
 
 ### No Homecloud panel appears
 
@@ -452,7 +452,7 @@ That is Google's own check. Type the password there, in the browser, never in a 
 
 ### Takeout: immich-go stopped
 
-Run the same command again. immich-go skips what Immich already has:
+Run the same command again. immich-go skips what Immich already has, and the second run may go on although Immich is no longer empty:
 
 ```
 python3 scripts/google/google_photos.py takeout --to DIR --import

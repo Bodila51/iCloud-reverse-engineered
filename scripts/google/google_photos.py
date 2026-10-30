@@ -109,6 +109,10 @@ LIST_FORMAT = "homecloud-google-list"
 
 PHOTOS_URL = "https://photos.google.com"
 TAKEOUT_URL = "https://takeout.google.com"
+# Written before the first Takeout import into an empty Immich, so a second run may go on.
+TAKEOUT_MARKER = "takeout-import.json"
+RESET_WARNING = ("in DevTools, click the gear icon at the top right, and at the bottom of Preferences "
+                 "click Restore defaults and reload.")
 CHROME_URL = "https://www.google.com/chrome/"
 
 GB = 1000 ** 3
@@ -708,7 +712,8 @@ def print_steps(folder: Path, browser: str, clipboard: bool, brave: bool, script
     steps: List[List[str]] = []
     if brave:
         steps.append(["Brave keeps the folder window that this needs switched off. Open "
-                      "brave://flags/#file-system-access-api in Brave, set it to Enabled, and click Relaunch."])
+                      "brave://flags/#file-system-access-api in Brave, set it to Enabled, and click Relaunch. When the "
+                      "move is done, set it back to Default."])
     if not clipboard:
         steps.append([f"Copy the script: open {script_file} in a text editor, select everything and copy it."])
     steps += [
@@ -718,7 +723,8 @@ def print_steps(folder: Path, browser: str, clipboard: bool, brave: bool, script
         [f"Click in the console, paste the script with {keys['paste']}, and press {enter}.",
          "The first time, the browser blocks the paste and shows a warning that asks you to type allow pasting. "
          "If your browser uses another language, it shows those words in that language. Type exactly what it "
-         f"shows, press {enter}, then paste again and press {enter}.",
+         f"shows, press {enter}, then paste again and press {enter}. This switches the warning off in this "
+         "browser profile. When the move is done, switch it back on: " + RESET_WARNING,
          "Why the warning is there: scammers tell people to paste code into this console to take over their "
          "accounts. Paste only the script that this kit just made, never code that someone sends you."],
         [f"A Homecloud panel appears on the page. Click Start. In the folder window, choose the folder "
@@ -1252,6 +1258,8 @@ def cmd_verify(args) -> int:
     if complete:
         say(f"Next, the import into Immich: {python_command()} scripts/immich/import_library.py all "
             f"--dir {quote_arg(str(folder))} --yes")
+        say("Last step in the browser: switch the console's paste warning back on. " + RESET_WARNING
+            + " In Brave, also set brave://flags/#file-system-access-api back to Default.")
         say(f"Result: OK. {ok:,} of {count(listed, 'item')} are on disk with the right size.")
         return EXIT_OK
     if listed == 0:
@@ -1374,6 +1382,31 @@ def check_immich(url: str, key: str) -> None:
         raise Stop(f"Immich answered HTTP {err.code} when asked for your account.") from None
     except (urllib.error.URLError, OSError, ValueError) as err:
         raise Stop(f"Immich at {url} did not answer properly ({err}).") from None
+
+
+def immich_asset_count(url: str, key: str) -> Optional[int]:
+    """How many photos and videos your Immich account holds, archived ones included, or None when
+    Immich does not say."""
+    total = 0
+    for query in ("", "?visibility=archive"):
+        try:
+            answer = immich_get(url, "/assets/statistics" + query, key)
+        except (urllib.error.URLError, OSError, ValueError):
+            return None
+        value = answer.get("total") if isinstance(answer, dict) else None
+        if not isinstance(value, int) or isinstance(value, bool):
+            return None
+        total = max(total, value)
+    return total
+
+
+def import_started_empty(marker: Path) -> bool:
+    """True when an earlier run of this Takeout import found Immich empty. What Immich holds now then
+    came from that run, and immich-go skips those files."""
+    try:
+        return json.loads(marker.read_text(encoding="utf-8")).get("immichAssetsBefore") == 0
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 def machine() -> str:
@@ -1607,6 +1640,20 @@ def cmd_takeout(args) -> int:
     url = immich_url(args.url)
     key = load_api_key(Path(os.path.expanduser(args.key_file)))
     check_immich(url, key)
+    # immich-go "upgrades": when a file in the archives has the same name and time as a photo in Immich,
+    # but more bytes, it uploads the file and deletes the photo in Immich for good, past the trash.
+    marker = folder / ".homecloud" / TAKEOUT_MARKER
+    held = immich_asset_count(url, key)
+    if held is None:
+        raise Stop("Immich did not say how many photos and videos it holds, so the import did not start. "
+                   "Check that Immich runs, and run this again.")
+    rerun = held > 0 and import_started_empty(marker)
+    if held and not rerun:
+        raise Stop(f"Immich already holds {held:,} photos and videos, so the import did not start. When a file in "
+                   "the archives has the same name and time as a photo in Immich, but more bytes, immich-go "
+                   "uploads it and deletes the photo in Immich for good, past Immich's trash. So the Takeout "
+                   "import runs only into an Immich that holds no photos yet. If your photos are in both clouds, "
+                   "import the Takeout archives first, before any other photos.")
     say(f"Found {count(len(archives), 'Takeout archive')} in {folder}, {human_bytes(total)}. Immich answers at {url}.")
     say("Check that these are all the parts Google's email lists: " + ", ".join(p.name for p in archives[:12])
         + (" ..." if len(archives) > 12 else ""))
@@ -1636,9 +1683,15 @@ def cmd_takeout(args) -> int:
                     f"and keep it in {immich_go_folder()}.")
     plan += [f"Import the {count(len(archives), 'archive')} in {folder} into Immich at {url} with immich-go. "
              "It creates your albums, includes photos whose .json file is missing, and leaves out what is in "
-             "Google's trash. Files Immich already has are skipped.",
+             "Google's trash.",
+             ("Immich holds only what this import added in an earlier run, and immich-go skips those files."
+              if rerun else "Immich holds no photos yet, so immich-go cannot replace or delete any."),
              "Your archives are only read. Nothing in Google Photos changes."]
     confirm(args, plan)
+    if not rerun:
+        write_atomic(marker, json.dumps({
+            "started": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+            "immichAssetsBefore": 0}) + "\n")
     exe = install_immich_go()
     code = run_immich_go(exe, url, key, archives)
     if code == 0:

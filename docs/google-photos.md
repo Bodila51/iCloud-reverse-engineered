@@ -22,7 +22,7 @@ The script only reads. It sends list, info, and download requests. It never send
 
 ### Why no password is needed
 
-The script runs in the browser tab where you are already signed in to Google. Your browser adds your sign-in to each request, as it does for the page itself. So the script never sees your password or a code. It never reads, copies, or saves your cookies or tokens, and nothing stays on the computer that could open your Google Account. If Google asks you to sign in, you do that on Google's own page, as you always do.
+The script runs in the browser tab where you are already signed in to Google. Your browser adds your sign-in to each request, as it does for the page itself. So the script never sees your password or a code. It never reads your cookies. It reads the page's own request key, as the page does, uses it only for its requests to photos.google.com, and never saves it, so nothing stays on the computer that could open your Google Account. If Google asks you to sign in, you do that on Google's own page, as you always do.
 
 Path A for iCloud is different: it keeps a session key on the computer until you log out, as [two-paths.md](two-paths.md#what-the-session-key-opens) explains.
 
@@ -42,13 +42,13 @@ Claude Code runs the commands, and you do steps 2 and 3 in your browser. The com
 
    `DIR` must be a folder that a web page may save into. Browsers refuse your home folder, Desktop, Documents, and Downloads themselves, and system folders such as Library and Applications on a Mac, or Program Files and AppData on Windows. A new folder directly in your home folder works, outside the folders that sync to a cloud service. Keep Google Photos in its own folder, apart from any iCloud copy: `prepare` and `verify` leave alone a folder that holds another script's list.
 
-   In Brave, first open `brave://flags/#file-system-access-api`, set it to **Enabled**, and click **Relaunch**. Brave keeps the folder window switched off until then ([Brave](https://github.com/brave/brave-core/blob/master/browser/about_flags.cc)). `prepare` prints this step when it opens Brave.
+   In Brave, first open `brave://flags/#file-system-access-api`, set it to **Enabled**, and click **Relaunch**. Brave keeps the folder window switched off until then ([Brave](https://github.com/brave/brave-core/blob/master/browser/about_flags.cc)). `prepare` prints this step when it opens Brave. When the move is done, set the flag back to **Default** and relaunch Brave.
 
 2. In the Google Photos tab that opens:
    - If Google asks you to sign in, sign in on Google's own page, with the Google Account that holds your photos. If you use more than one account, check the picture at the top right.
    - Open the console. Press Cmd+Option+J on a Mac, or Ctrl+Shift+J on Windows ([Chrome DevTools](https://developer.chrome.com/docs/devtools/open)). If nothing opens, press Cmd+Option+I on a Mac or F12 on Windows, and click **Console**.
    - Click in the console, paste the script with Cmd+V on a Mac or Ctrl+V on Windows, and press Return or Enter.
-   - The first time, the browser blocks the paste and shows a warning that asks you to type `allow pasting`. If your browser uses another language, the words are in that language. Type exactly what it shows, press Enter, then paste again and press Enter ([Chrome](https://developer.chrome.com/blog/self-xss), [Edge](https://learn.microsoft.com/en-us/microsoft-edge/devtools/console/console-javascript)).
+   - The first time, the browser blocks the paste and shows a warning that asks you to type `allow pasting`. If your browser uses another language, the words are in that language. Type exactly what it shows, press Enter, then paste again and press Enter ([Chrome](https://developer.chrome.com/blog/self-xss), [Edge](https://learn.microsoft.com/en-us/microsoft-edge/devtools/console/console-javascript)). Typing it switches the warning off in this browser profile until you reset it, as step 6 shows.
 
 3. A Homecloud panel appears at the bottom right of the page. Click **Start**. A folder window opens. Choose `DIR`, the folder that `prepare` printed. The panel accepts only a folder with that name. When the browser asks "Allow this site to edit files?", click **Allow**. The script lists your library, with your archived items, and reads your own albums. It compares the size of the files with the free space that `prepare` measured, and if they do not fit, it stops before any download. Then it downloads the first few items to find a download method that works, and then the rest. Keep the tab open, ideally in front, and the computer plugged in and awake, until the panel says **Done**. You can use other tabs and apps meanwhile. While the tab is in front, the script keeps the screen on, if your browser allows it. To pause, click **Stop**, and click **Start** to go on.
 
@@ -70,6 +70,8 @@ Claude Code runs the commands, and you do steps 2 and 3 in your browser. The com
    ```
 
    Claude Code runs the import only when `verify` ends with "Result: OK". [How the check works](#how-the-check-works) explains `verify`. The import copies every file into Immich, marks your favorites, fills your albums, and archives the items that you archived in Google Photos. Then it checks that Immich holds every file, and ends with "Result: OK".
+
+6. Switch the console's paste warning back on: in DevTools, click the gear icon at the top right, and at the bottom of **Preferences** click **Restore defaults and reload**. This also resets any other DevTools setting you changed. In Brave, also set `brave://flags/#file-system-access-api` back to **Default** and relaunch Brave.
 
 If the tab closes, the computer sleeps, or the download stops for another reason, do steps 1 to 3 again with the same `DIR`. The script skips every item that is already in `DIR` with the right size. If the panel shows a problem, tell Claude Code what it says. If Google changed its requests, the script cannot work until it is updated, and Claude Code offers you [Google Takeout](#google-takeout-the-official-route).
 
@@ -108,7 +110,7 @@ Read these before you choose this way. Claude Code says them too, before you cho
 - **Google's terms.** Google's terms of service forbid reverse engineering its services and some kinds of automated access. The script repeats Google's internal requests from your own tab, so Google could see it as a breach of its terms.
 - **Your whole Google Account.** Google can suspend or close an account that breaks its terms ([Google](https://support.google.com/accounts/answer/40039)). That would cut you off from Gmail, Google Drive, YouTube, and everything else that uses the account, not only Photos. No case of this was found for read-only tools that run in your own browser tab, but nobody can rule it out.
 - **It can stop working any day.** The internal requests are not a public interface. When Google changes them, the script stops with a message, and you can switch to Takeout.
-- **The console warning is real.** Browsers warn before you paste into the console, because scammers trick people into pasting code that takes over their accounts. Paste only the script that this kit's `prepare` copied for you, in the Google Photos tab it opened. Never paste code that someone sends you.
+- **The console warning is real.** Browsers warn before you paste into the console, because scammers trick people into pasting code that takes over their accounts. Paste only the script that this kit's `prepare` copied for you, in the Google Photos tab it opened. Never paste code that someone sends you. Typing `allow pasting` switches the warning off in that browser profile, and browser sync can carry that to your other computers, until you reset DevTools as step 6 of [The steps](#the-steps) shows.
 - **Storage saver items have no original.** Google kept only the smaller copy.
 - **Locked Folder and Trash are not included.**
 
@@ -145,6 +147,8 @@ The steps:
    ```
 
    It checks that no part is missing or cut off, and that Immich has room. It shows its plan and asks first. Claude Code adds `--yes` when you already said yes to the plan. Then it downloads immich-go v0.32.0 from GitHub, checks its SHA-256 checksum, keeps it in `.homecloud/tools` in your home folder, and runs it with the API key in an environment variable, never on the command line. immich-go creates your albums, includes photos whose JSON file is missing, leaves out what is in Google's trash, and skips files that Immich already has. If it stops, run the same command again.
+
+   The import runs only into an Immich that holds no photos yet. When a file in the archives has the same name and time as a photo in Immich, but more bytes, immich-go uploads it and deletes the photo in Immich for good, past Immich's trash. If your photos are in both clouds, import the Takeout archives first.
 
 Takeout leaves your photos in Google Photos, like Path G.
 
@@ -202,7 +206,7 @@ Before you drop to the free 15 GB, get under it. Google lists what happens while
 
 [troubleshooting.md](troubleshooting.md#google-photos) has the fixes. The most common ones:
 
-- The console does not let you paste: type the words that the warning shows, `allow pasting` in English, press Enter, and paste again.
+- The console does not let you paste: type the words that the warning shows, `allow pasting` in English, press Enter, and paste again. When the move is done, switch the warning back on: in DevTools, click the gear icon at the top right, and at the bottom of **Preferences** click **Restore defaults and reload**. This also resets any other DevTools setting you changed.
 - The folder window says "Can't open this folder": the browser does not let a web page use that folder. Click **Choose a different folder** and pick `DIR`, the folder that `prepare` printed.
 - In Brave, no folder window opens: turn on `brave://flags/#file-system-access-api` and relaunch Brave.
 - The download stopped: do steps 1 to 3 again with the same `DIR`. The script skips what is done.

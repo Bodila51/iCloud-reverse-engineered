@@ -423,6 +423,7 @@ def test_takeout_import_gives_the_key_to_immich_go_only_in_its_environment(tmp_p
     monkeypatch.delenv("IMMICH_API_KEY", raising=False)
     monkeypatch.setenv("IMMICH_GO_UPLOAD_DRY_RUN", "true")  # left over from another run: must not leak in
     monkeypatch.setattr(gp, "check_immich", lambda url, key: None)
+    monkeypatch.setattr(gp, "immich_asset_count", lambda url, key: 0)
     monkeypatch.setattr(gp, "install_immich_go", lambda asset=None: exe)
     code = gp.main(["takeout", "--to", str(folder), "--import", "--yes", "--key-file", str(key_file),
                     "--app-dir", str(tmp_path / "no-immich-here")])
@@ -446,6 +447,7 @@ def test_takeout_import_asks_first_and_changes_nothing_without_a_yes(tmp_path, m
     folder.mkdir()
     fake_archive(folder / "takeout-20261030T000000Z-001.zip")
     monkeypatch.setattr(gp, "check_immich", lambda url, key: None)
+    monkeypatch.setattr(gp, "immich_asset_count", lambda url, key: 0)
 
     def no_install(asset=None):
         raise AssertionError("installed immich-go without a yes")
@@ -456,6 +458,64 @@ def test_takeout_import_asks_first_and_changes_nothing_without_a_yes(tmp_path, m
                     "--app-dir", str(tmp_path)])
     assert code == 2
     assert "Nothing was changed" in capsys.readouterr().out
+
+
+def test_takeout_import_refuses_an_immich_that_already_holds_photos(tmp_path, monkeypatch, capsys):
+    key_file = tmp_path / "immich-api-key"
+    key_file.write_text("hc-secret\n", encoding="utf-8")
+    folder = tmp_path / "takeout"
+    folder.mkdir()
+    fake_archive(folder / "takeout-20261030T000000Z-001.zip")
+    monkeypatch.setattr(gp, "check_immich", lambda url, key: None)
+    monkeypatch.setattr(gp, "immich_asset_count", lambda url, key: 42)
+
+    def no_install(asset=None):
+        raise AssertionError("ran immich-go on an Immich that holds photos")
+
+    monkeypatch.setattr(gp, "install_immich_go", no_install)
+    code = gp.main(["takeout", "--to", str(folder), "--import", "--yes", "--key-file", str(key_file),
+                    "--app-dir", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "already holds 42 photos and videos" in out and "deletes the photo in Immich" in out
+    assert not (folder / ".homecloud" / gp.TAKEOUT_MARKER).exists()
+
+
+def test_takeout_import_goes_on_after_its_own_first_run(tmp_path, monkeypatch, capsys):
+    key_file = tmp_path / "immich-api-key"
+    key_file.write_text("hc-secret\n", encoding="utf-8")
+    folder = tmp_path / "takeout"
+    folder.mkdir()
+    fake_archive(folder / "takeout-20261030T000000Z-001.zip")
+    calls = []
+    monkeypatch.setattr(gp, "check_immich", lambda url, key: None)
+    monkeypatch.setattr(gp, "install_immich_go", lambda asset=None: tmp_path / "immich-go")
+    monkeypatch.setattr(gp, "run_immich_go", lambda exe, url, key, archives: calls.append(url) or 0)
+
+    monkeypatch.setattr(gp, "immich_asset_count", lambda url, key: 0)
+    args = ["takeout", "--to", str(folder), "--import", "--yes", "--key-file", str(key_file),
+            "--app-dir", str(tmp_path)]
+    assert gp.main(args) == 0
+    marker = json.loads((folder / ".homecloud" / gp.TAKEOUT_MARKER).read_text(encoding="utf-8"))
+    assert marker["immichAssetsBefore"] == 0
+
+    monkeypatch.setattr(gp, "immich_asset_count", lambda url, key: 7)
+    assert gp.main(args) == 0
+    assert len(calls) == 2
+    assert "only what this import added" in capsys.readouterr().out
+
+
+def test_takeout_import_stops_when_immich_does_not_give_a_count(tmp_path, monkeypatch, capsys):
+    key_file = tmp_path / "immich-api-key"
+    key_file.write_text("hc-secret\n", encoding="utf-8")
+    folder = tmp_path / "takeout"
+    folder.mkdir()
+    fake_archive(folder / "takeout-20261030T000000Z-001.zip")
+    monkeypatch.setattr(gp, "check_immich", lambda url, key: None)
+    monkeypatch.setattr(gp, "immich_asset_count", lambda url, key: None)
+    assert gp.main(["takeout", "--to", str(folder), "--import", "--yes", "--key-file", str(key_file),
+                    "--app-dir", str(tmp_path)]) == 1
+    assert "did not say how many" in capsys.readouterr().out
 
 
 def test_takeout_import_finds_a_cut_off_archive_and_a_missing_part(tmp_path, capsys):

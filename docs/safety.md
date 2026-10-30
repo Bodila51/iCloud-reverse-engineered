@@ -28,7 +28,7 @@ Claude Code never asks for your Apple Account password or a verification code in
 
 ## Your Google password and your Google Account
 
-With Path G, the browser script runs in the photos.google.com tab where you are already signed in. Your browser adds your sign-in to each request, as it does for the page itself, so the script never sees your password or a code. It never reads, copies, or saves your cookies or tokens, and nothing stays on the computer that could open your Google Account. [google-photos.md](google-photos.md#why-no-password-is-needed) explains how.
+With Path G, the browser script runs in the photos.google.com tab where you are already signed in. Your browser adds your sign-in to each request, as it does for the page itself, so the script never sees your password or a code. It never reads your cookies, uses the page's own request key only inside the tab, as the page does, and never saves it, so nothing stays on the computer that could open your Google Account. [google-photos.md](google-photos.md#why-no-password-is-needed) explains how.
 
 Claude Code never asks for your Google password or a verification code in the chat. It never opens your browser's profile files, and it never runs the browser script anywhere except in your own tab, where you paste it yourself. If Google asks you to sign in, you do it on Google's own page. If you ever type your Google password into the chat by mistake, change it right away in your Google Account, at myaccount.google.com.
 

@@ -28,7 +28,7 @@ Path B fits best if your Apple account holds a lot of sensitive data, or if you 
 
 ### Google Photos
 
-- **Path G: Google Photos in your browser.** You paste a script from the kit into the console of your own signed-in photos.google.com tab, in Chrome, Edge, Brave, Arc, Vivaldi, or Opera. It repeats the web app's internal requests: it lists your library, compares its size with the free space, and downloads every item into a folder that you pick. It only reads, and it never sees your Google password, cookies, or tokens. At the end, the kit checks every file against the list that the script read from Google: "N of N".
+- **Path G: Google Photos in your browser.** You paste a script from the kit into the console of your own signed-in photos.google.com tab, in Chrome, Edge, Brave, Arc, Vivaldi, or Opera. It repeats the web app's internal requests: it lists your library, compares its size with the free space, and downloads every item into a folder that you pick. It only reads. It never sees your Google password or reads your cookies, and it saves nothing that could open your account. At the end, the kit checks every file against the list that the script read from Google: "N of N".
 - **Google Takeout, Google's own export.** It carries no risk to your Google Account. Google prepares the zip archives first, which can take hours or days, you download them within 7 days, and the check is weaker.
 
 Path G has risks, and you should know them before you choose:
@@ -123,7 +123,7 @@ Your path and your mode add a few steps of your own, and the plan lists them:
 
 - Path A: you type your Apple Account email, password, and code once, in your own Terminal or PowerShell window.
 - Path B: you change a setting in Apple's own app, such as **Download Originals to this Mac** in Photos, or you install iCloud for Windows. Before the download, you may read your library's size on your iPhone and type it in the chat. With the Immich app, iCloud for Windows, or Apple's data copy, you also read the number of photos and videos there.
-- Path G: in the Google Photos tab that opens, you open the console, paste the script, and press Enter. The first time, the browser asks you to type `allow pasting` and paste again. Then you click **Start** in the Homecloud panel, pick the folder, and allow the site to edit files in it. You keep the tab open until the panel says **Done**. In Brave, you first switch on one setting, and the steps show how.
+- Path G: in the Google Photos tab that opens, you open the console, paste the script, and press Enter. The first time, the browser asks you to type `allow pasting` and paste again. That switches the paste warning off in this browser profile, so when the move is done, you switch it back on: in DevTools, click the gear icon at the top right, and at the bottom of **Preferences** click **Restore defaults and reload**. This also resets any other DevTools setting you changed. Then you click **Start** in the Homecloud panel, pick the folder, and allow the site to edit files in it. You keep the tab open until the panel says **Done**. In Brave, you first switch on one setting, and the steps show how.
 - On a Mac without Apple's Command Line Tools, a window offers to install them. Click **Install**, then **Agree**.
 - On Windows, the setup may need one restart to finish WSL 2, which Docker Desktop uses. Restart the PC, open the same session in the Claude app, and type **continue**.
 - In Tailscale's admin console, you turn off key expiry for this computer, so Tailscale does not sign it out after 180 days. The setup prints the link.
@@ -290,9 +290,9 @@ Use a new folder for `DIR`, apart from any iCloud copy. The browser does not let
    python3 scripts/google/google_photos.py prepare --to DIR
    ```
 
-   In Brave, first open `brave://flags/#file-system-access-api`, set it to **Enabled**, and click **Relaunch**. Brave keeps the folder window that the script needs switched off until then.
+   In Brave, first open `brave://flags/#file-system-access-api`, set it to **Enabled**, and click **Relaunch**. Brave keeps the folder window that the script needs switched off until then. When the move is done, set it back to **Default**.
 
-2. In the Google Photos tab, sign in if Google asks, on Google's own page. If you use more than one Google account, check that the picture at the top right is the account with your photos. Open the console with Cmd+Option+J on a Mac or Ctrl+Shift+J on Windows. If nothing opens, press Cmd+Option+I on a Mac or F12 on Windows, and click **Console**. Click in the console, paste the script, and press Enter. The first time, the browser blocks the paste and asks you to type `allow pasting`, in the browser's language. Type exactly what it shows, press Enter, then paste again and press Enter.
+2. In the Google Photos tab, sign in if Google asks, on Google's own page. If you use more than one Google account, check that the picture at the top right is the account with your photos. Open the console with Cmd+Option+J on a Mac or Ctrl+Shift+J on Windows. If nothing opens, press Cmd+Option+I on a Mac or F12 on Windows, and click **Console**. Click in the console, paste the script, and press Enter. The first time, the browser blocks the paste and asks you to type `allow pasting`, in the browser's language. Type exactly what it shows, press Enter, then paste again and press Enter. This switches the warning off in this browser profile until you reset it in step 4.
 3. In the Homecloud panel on the page, click **Start** and choose `DIR` in the folder window. When the browser asks "Allow this site to edit files?", click **Allow**. Keep the tab open, ideally in front, and the computer awake and plugged in, until the panel says **Done**.
 4. Follow the progress, then check every file. `status` exits with 0 when the download is done, 4 while it still runs or has not started, and 1 when it failed or was stopped. On Windows, leave out `caffeinate -i`.
 
@@ -301,7 +301,7 @@ Use a new folder for `DIR`, apart from any iCloud copy. The browser does not let
    python3 scripts/google/google_photos.py verify --to DIR
    ```
 
-   Go on only if `verify` exits with code 0. It writes the list that the Immich import reads. Then import `DIR` into Immich with the `import_library.py` commands in step 4 of [Do it by hand](#do-it-by-hand).
+   Go on only if `verify` exits with code 0. It writes the list that the Immich import reads. Then import `DIR` into Immich with the `import_library.py` commands in step 4 of [Do it by hand](#do-it-by-hand). Last, switch the console's paste warning back on: in DevTools, click the gear icon at the top right, and at the bottom of **Preferences** click **Restore defaults and reload**. This also resets any other DevTools setting you changed. In Brave, also set `brave://flags/#file-system-access-api` back to **Default** and click **Relaunch**.
 
 If the tab closes or the computer sleeps, run `prepare` again with the same `DIR`, paste the script again, and click **Start**. It skips every item that is already there. If the panel shows a problem with Google's requests, Google may have changed them. Then the script cannot work until it is updated, and [Google Takeout](docs/google-photos.md#google-takeout-the-official-route) still works.
 
@@ -374,7 +374,7 @@ You can run the kit without Claude Code. You need a terminal: Terminal on a Mac,
 ## Safety promises
 
 - Your Apple password never goes into the chat. With Path B, nobody asks for it. With Path A, you type it only in your own Terminal window, it goes only to Apple, and the session key is deleted when you log out.
-- Your Google password never goes into the chat either. With Path G, the script runs in your own signed-in tab, and never sees your password, your cookies, or your tokens. Nothing that opens your Google Account stays on the computer.
+- Your Google password never goes into the chat either. With Path G, the script runs in your own signed-in tab, and never sees your password or reads your cookies. It uses the page's own request key inside the tab, as the page does, and never saves it. Nothing that opens your Google Account stays on the computer.
 - Homecloud never deletes, moves, or changes anything in iCloud, in Google Photos, in the Photos library on your Mac, or in the iCloud Photos folder on your PC.
 - Claude Code shows you its whole plan before it installs or changes anything, and starts only after your yes. It asks again before anything that would delete data or cannot be undone.
 - Your Immich password goes only into a window on your computer, never into the chat. The import's API key goes into a file that only your account can read, and nothing shows it.
@@ -409,7 +409,7 @@ Only for Path A. You type it in your own Terminal window, never in the chat, and
 
 ### Do I need my Google password?
 
-No. Path G runs in the browser tab where you are already signed in to Google Photos. If Google asks you to sign in, you do it on Google's own page, as always. The script never sees your password, and the kit never reads your cookies or tokens. If you ever type your Google password into the chat, change it.
+No. Path G runs in the browser tab where you are already signed in to Google Photos. If Google asks you to sign in, you do it on Google's own page, as always. The script never sees your password or reads your cookies, and nothing that could open your account is saved. If you ever type your Google password into the chat, change it.
 
 ### Is Auto mode safe to use?
 
