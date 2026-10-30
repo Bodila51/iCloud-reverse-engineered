@@ -5,19 +5,71 @@ These scripts install Immich, an open-source photo app that you run yourself, wi
 | File | What it does |
 |---|---|
 | `setup_mac.sh`, `setup_windows.ps1` | Install and start Immich. They show the plan and ask first. |
+| `bootstrap.py` | Creates your Immich admin account and an API key for the import, and saves the key. You type the password in a window, never in a chat. |
 | `import_library.py` | Copies `DIR` into Immich, sets favorites, albums and archived items, and checks the result. |
+| `make_manifest.py` | Lists the photos and videos in a `DIR` that has no manifest, such as a copy from iCloud for Windows. |
 | `undo_mac.sh`, `undo_windows.ps1` | Remove a test install after you type `DELETE`. |
 
 Run every command from the kit folder. On Windows, type `py` where this page says `python3`.
 
-## Before you start
+## The one-command way
+
+One command sets up Immich and everything around it. On a Mac:
+
+```
+bash scripts/setup.sh --yes
+```
+
+On Windows:
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -Yes
+```
+
+Without `--yes` (`-Yes` on Windows), the setup shows its plan and asks once before it changes anything. Claude Code adds `--yes` after you say yes to its own plan. For Immich, the setup does this:
+
+1. It installs Docker Desktop if it is missing, and starts it. On a Mac, macOS asks for your Mac password to install it, and the setup gives Docker Desktop more memory when Immich needs it. On Windows, it first installs WSL 2 if Docker Desktop needs it. Windows asks for permission, and may need one restart: then run the same command again.
+2. It runs `setup_mac.sh --yes`, or `setup_windows.ps1 -Yes` on Windows, which installs and starts Immich. Machine learning is on or off as [Machine learning on an 8 GB computer](#machine-learning-on-an-8-gb-computer) describes.
+3. It runs `bootstrap.py`, which sets up Immich without its web page. A window asks you to choose an email and a password for your Immich admin account. It turns machine learning off in Immich's settings too, when the setup turned the service off. It creates an API key named "Homecloud" with all permissions and saves it in `~/.homecloud/immich-api-key`, which only your account can read. It prints your email, and never the password or the key.
+
+Then it connects the computer to Tailscale and opens a page for your iPhone, as [../tailscale.md](../tailscale.md) describes. It ends with `Result: OK`. If it stops, its last line says what to do. A second run skips what is done.
+
+Then import your photos. The key is already saved, so you need no `save-key`. `check` only reads and shows the plan. `all` asks first. Claude Code adds `--yes` after you agreed to its plan.
+
+```
+python3 scripts/immich/import_library.py check --dir DIR
+python3 scripts/immich/import_library.py all --dir DIR
+```
+
+Go on only when it ends with `Result: OK` and exit code 0. [What the import does](#what-the-import-does) explains each part. Last, in Docker Desktop, open **Settings** > **General** and turn on **Start Docker Desktop when you sign in to your computer**. It is off by default, and without it Immich stays down after a restart until you open Docker Desktop.
+
+### Only the Immich part
+
+To set up Immich without Tailscale and the phone page, run these two on a Mac:
+
+```
+bash scripts/immich/setup_mac.sh --yes
+python3 scripts/immich/bootstrap.py --url http://localhost:2283
+```
+
+On Windows, run `setup_windows.ps1 -Yes`, then `py scripts\immich\bootstrap.py --url http://localhost:2283` in your own PowerShell window. It asks for the email and the password right there in PowerShell, and nothing shows while you type the password.
+
+- If the setup turned machine learning off, add `--ml off` to `bootstrap.py`.
+- If Immich already has an account, `bootstrap.py` asks for that account's email and password. It makes a new key only if the saved key is missing or no longer works.
+- A second run with a working key changes nothing.
+
+## By hand
+
+These are the same steps without `setup.sh` and `bootstrap.py`. Use them if a script stops, or to see what each step does.
+
+### Before you start
 
 - **Docker Desktop.** Download it from Docker's install page for [Mac](https://docs.docker.com/desktop/setup/install/mac-install/) or [Windows](https://docs.docker.com/desktop/setup/install/windows-install/). On a Mac, open `Docker.dmg`, drag Docker to Applications, open it and accept the agreement. Docker Desktop is free for personal use. The setup script checks for it and prints these links if it is missing.
 - **Memory.** Immich asks for at least 6 GB of RAM, and 8 GB is better. Docker Desktop gets half of the computer's memory by default, so an 8 GB computer gives Docker about 4 GB. Then the setup turns machine learning off. See [Machine learning on an 8 GB computer](#machine-learning-on-an-8-gb-computer).
 - **Disk space.** The import copies every file into Immich's library folder. So you need room for `DIR` twice, plus about a fifth for thumbnails and video previews. The database takes 1 to 3 GB. It must stay on the computer's own disk, never on a network share.
 - **Where Immich stands.** Immich recommends Linux. Its docs say other systems "tend to provide a poor Docker experience and are strongly discouraged", and that its team can help less there. It does run with Docker Desktop on a Mac or Windows, and these scripts follow Immich's steps for that.
 
-## Install on a Mac
+### Install on a Mac
 
 1. Run the setup. It checks Docker, shows the plan and asks before it changes anything.
 
@@ -25,9 +77,11 @@ Run every command from the kit folder. On Windows, type `py` where this page say
    bash scripts/immich/setup_mac.sh
    ```
 
-   When Claude Code runs it, the script shows the plan and stops. After you agree, Claude Code runs it again with `--yes`.
+   Without a terminal to ask in, as when Claude Code runs it, the script shows the plan and stops. Add `--yes` after you agree.
 
    The setup puts Immich in `~/immich-app`: `docker-compose.yml`, `.env`, the photo library in `library`, and the database in `postgres`. It writes a random database password into `.env`, which only your account can read. The first start downloads Immich's programs, a few gigabytes, so it can take several minutes. At the end it prints the addresses and the next steps.
+
+   `bootstrap.py` does steps 2, 3, 5 and 6 below for you, as [The one-command way](#the-one-command-way) describes.
 
 2. Open <http://localhost:2283>, click **Getting Started** and create your admin account. Use a strong password, and not your Apple Account password.
 3. If the setup turned machine learning off, open **Administration** > **Settings** > **Machine Learning Settings** and turn it off there too. Otherwise Immich queues machine learning jobs that fail for every photo.
@@ -47,7 +101,7 @@ Run every command from the kit folder. On Windows, type `py` where this page say
    python3 scripts/immich/import_library.py check --dir DIR
    ```
 
-8. Import. `all` uploads, sets favorites and albums, then checks. It asks first. Claude Code adds `--yes` after you agree.
+8. Import. `all` uploads, sets favorites and albums, then checks. It asks first. Add `--yes` when you already agreed.
 
    ```
    python3 scripts/immich/import_library.py all --dir DIR
@@ -57,7 +111,7 @@ Run every command from the kit folder. On Windows, type `py` where this page say
 
 9. Set up Tailscale and the iPhone app with [../tailscale.md](../tailscale.md). To keep the computer awake, use [../always_on/](../always_on/).
 
-## Install on Windows
+### Install on Windows
 
 The steps are the same as on a Mac, with these commands:
 

@@ -2,7 +2,7 @@
 
 Homecloud moves your iCloud Photos library to Immich on your own computer. Your iPhone then reaches it through Tailscale. There are two ways to get the old library out of iCloud, and both are fine choices. They end in the same place and differ only in how the photos get there.
 
-Claude Code explains both ways, asks you two or three questions, and recommends one. It runs nothing that changes your computer until you pick.
+Claude Code explains both ways, recommends one with its reason, and asks you to pick. It runs nothing that changes your computer until you say yes to its plan.
 
 ## Path A: sign in to iCloud.com
 
@@ -106,7 +106,7 @@ Paths A and B1 need about 2.2 times your library, because the files land in a do
 
 ## Which one to pick
 
-There is no wrong pick. Claude Code asks you two or three questions and recommends one, with its reason:
+There is no wrong pick. Claude Code recommends one, with its reason, and you choose:
 
 - **Path B** if your Apple account holds a lot of sensitive data, such as mail, notes, and documents, or if you don't want any key on the computer, even for a day.
 - **Path A** if your library is big, if you use Windows or Linux, or if you want the photos to go straight to an external drive.

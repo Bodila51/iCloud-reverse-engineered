@@ -4,15 +4,65 @@ Tailscale links your iPhone and your computer through an encrypted private netwo
 
 Do these steps after Immich runs on your computer, as [immich/README.md](immich/README.md) describes. You create your own Tailscale account and type every sign-in yourself.
 
+## The one-command way
+
+`scripts/setup.sh` on a Mac and `scripts\setup.ps1` on Windows run this part for you. To run only the Tailscale part, from the kit folder:
+
+```
+bash scripts/tailscale_setup.sh --yes
+```
+
+On Windows:
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\tailscale_setup.ps1 -Yes
+```
+
+Without `--yes` (`-Yes` on Windows), it shows its plan and asks first. It does this:
+
+1. If Tailscale is missing, it installs it. On a Mac, it downloads Tailscale's standalone app, the variant Tailscale recommends, and macOS asks for your Mac password. On Windows, winget installs it, and Windows asks for permission. Both check that Tailscale signed what they install.
+2. It starts Tailscale. The first time on a Mac, macOS asks you to allow Tailscale's system extension and its VPN configuration. Allow both.
+3. If the computer is not signed in, a browser window opens. Sign in there, or create your free account.
+4. It waits up to 5 minutes until the computer is connected. Then it prints the address for the Immich app, such as `Address: http://100.x.y.z:2283`, and the computer's MagicDNS name. If Tailscale is already connected, it only prints these lines.
+
+It never uses or prints an auth key. If your Tailscale account asks for new devices to be approved, it tells you where to approve this one.
+
+Then make the page for your iPhone, with that address and your Immich email:
+
+```
+python3 scripts/phone_card.py --url http://100.x.y.z:2283 --email you@example.com --open
+```
+
+It writes `phone.html` in the `.homecloud` folder in your home folder and opens it in your browser. The page shows two QR codes, for Tailscale and for Immich in the App Store, the server address in large type, your Immich email, and five steps for the iPhone. It holds no password, token or key. The script also prints the steps in the terminal.
+
+On the iPhone, follow the five steps on the page:
+
+1. Point the camera at the Tailscale code, tap the link, and install **Tailscale**.
+2. Open Tailscale and tap **Get Started**. When iOS asks to add a VPN configuration, tap **Allow**. Sign in with the same account as on the computer.
+3. Point the camera at the Immich code, tap the link, and install **Immich**.
+4. Open Immich, enter the server address, and sign in with your Immich email and password.
+5. Tap the cloud icon at the top right. Under **Backup Albums**, tap **Select** and pick **Recents** for all your photos and videos. Go back and tap **Enable Backup**.
+
+When iOS asks about access to your photos, allow full access. If the import is still running on the computer, wait with step 5 until it ends. The app then skips every photo that Immich already has.
+
+Two things the scripts leave to you:
+
+- Turn off key expiry for the computer, as [Turn off key expiry for the computer](#turn-off-key-expiry-for-the-computer) shows. Otherwise Tailscale signs the computer out after 180 days. The script prints the link.
+- On a Mac, make Tailscale open when you sign in, as step 5 under [Mac](#mac) shows.
+
 ## What it costs
 
 Tailscale's Personal plan is free for non-commercial use. It covers up to 6 users and unlimited personal devices. Tailscale changed these limits in April 2026, so older pages still say 3 users and 100 devices. Check [tailscale.com/pricing](https://tailscale.com/pricing) for the current terms.
 
 Sharing your computer with family members, as shown in [Family members](#family-members-share-the-computer-do-not-invite), uses none of the 6 user places.
 
-## Step 1: Tailscale on the computer
+## By hand
 
-### Mac
+These are the same steps without the scripts, with more detail. Use them if a script stops, or to check something.
+
+### Step 1: Tailscale on the computer
+
+#### Mac
 
 1. Download Tailscale's standalone app, which Tailscale recommends for macOS: <https://pkgs.tailscale.com/stable/Tailscale-latest-macos.pkg>. Open the file and follow the installer.
 2. Install only this version. Tailscale warns against running it next to the Mac App Store version on the same Mac.
@@ -21,13 +71,13 @@ Sharing your computer with family members, as shown in [Family members](#family-
 5. Make Tailscale open when you sign in to the Mac. Open **System Settings** > **General** > **Login Items & Extensions** (**Login Items** on older macOS). If Tailscale is not under **Open at Login**, click **+** and add it from Applications.
 6. Optional, for the check commands below: in Tailscale's **Settings**, under **CLI integration**, click **Install Now** and type your Mac password. This needs macOS 13 or later and adds the `tailscale` command. Without it, type `/Applications/Tailscale.app/Contents/MacOS/Tailscale` in place of `tailscale`.
 
-### Windows
+#### Windows
 
 1. Download the installer from <https://tailscale.com/download/windows> and run it.
 2. The Tailscale icon appears in the notification area of the taskbar. Right-click it and choose **Log in**. Sign in, or create your account, in the browser window that opens.
 3. The `tailscale` command works in PowerShell. If PowerShell does not find it, type `& "C:\Program Files\Tailscale\tailscale.exe"` in place of `tailscale`.
 
-### Turn off key expiry for the computer
+#### Turn off key expiry for the computer
 
 Tailscale signs each device out after 180 days by default. Then the iPhone cannot reach the computer until you sign in on the computer again. For a computer that serves your photos, turn this off:
 
@@ -35,7 +85,7 @@ Tailscale signs each device out after 180 days by default. Then the iPhone canno
 2. Click the menu (**...**) at the end of your computer's row.
 3. Choose **Disable key expiry**.
 
-## Step 2: check the computer
+### Step 2: check the computer
 
 Run these in Terminal on a Mac or in PowerShell on Windows:
 
@@ -44,7 +94,7 @@ tailscale status
 tailscale ip -4
 ```
 
-`tailscale status` lists your devices. The first line is this computer. `tailscale ip -4` prints this computer's Tailscale address, which starts with 100. Below, `100.x.y.z` stands for that address. The Immich setup script also prints it as "Through Tailscale".
+`tailscale status` lists your devices. The first line is this computer. `tailscale ip -4` prints this computer's Tailscale address, which starts with 100. Below, `100.x.y.z` stands for that address. The Tailscale setup script prints it as "Address", and the Immich setup script as "Through Tailscale".
 
 The computer also has a name. MagicDNS is on by default for Tailscale accounts made since October 2022. The full name looks like `computer-name.tailnet-name.ts.net`, and the Machines page of the admin console shows it.
 
@@ -56,7 +106,7 @@ curl http://100.x.y.z:2283/api/server/ping
 
 It prints `{"res":"pong"}`. If it prints nothing or an error, check that `http://localhost:2283` opens in a browser on the computer. If that fails too, Immich is not running: start Docker Desktop and wait a minute.
 
-## Step 3: Tailscale on the iPhone
+### Step 3: Tailscale on the iPhone
 
 1. Install **Tailscale** from the App Store and open it.
 2. Tap **Get Started** and accept the prompt to add a VPN configuration. You can also allow notifications, which tell you when you need to sign in again.
@@ -67,7 +117,7 @@ It prints `{"res":"pong"}`. If it prints nothing or an error, check that `http:/
 
 An iPhone allows only one VPN with On Demand at a time. If you turn on On Demand in another VPN app, Tailscale stops connecting by itself, and the Immich app cannot upload until you connect Tailscale again.
 
-## Step 4: the Immich app
+### Step 4: the Immich app
 
 1. Install **Immich** from the App Store and open it.
 2. Enter the server address: `http://100.x.y.z:2283`. The name works too: `http://computer-name.tailnet-name.ts.net:2283`. The 100 address works even when MagicDNS is off.
@@ -88,7 +138,7 @@ Photos that the import already put on the computer:
 - If a photo on the iPhone is not byte for byte the same as the downloaded copy, the app uploads it again, and Immich shows it twice.
 - If iCloud Photos is still on with **Optimize iPhone Storage**, the app downloads each photo from iCloud to compute its checksum. That takes time, space and mobile data while it runs.
 
-## Step 5: test away from home
+### Step 5: test away from home
 
 Turn off Wi-Fi on the iPhone, so it uses mobile data. Open the Immich app. Your photos should load. If they do not, see [If the app cannot connect](#if-the-app-cannot-connect).
 
