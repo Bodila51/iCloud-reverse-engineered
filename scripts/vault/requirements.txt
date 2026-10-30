@@ -1,0 +1,3 @@
+# pymobiledevice3 (https://github.com/doronz88/pymobiledevice3) is GPL-3.0.
+# It is installed from PyPI next to this kit, not bundled with it.
+pymobiledevice3==11.49.0

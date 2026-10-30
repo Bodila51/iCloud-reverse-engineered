@@ -1,0 +1,371 @@
+# Homecloud
+
+Move your iCloud Photos library to a computer you already own. Keep a photo app on your iPhone. Stop paying Apple for storage.
+
+You paste one prompt into Claude Code, and Claude Code does the setup with you on your Mac or Windows PC:
+
+1. It explains the two ways to move your photos, recommends one, and waits for your pick. It changes nothing before that.
+2. It checks your computer, without changing anything.
+3. Every original comes down in full quality, in the way you picked.
+4. It checks every photo and video and reports "N of N".
+5. It installs [Immich](https://immich.app), a free photo app that runs on your computer, and adds your library to it.
+6. It helps you set up [Tailscale](https://tailscale.com), so the Immich iPhone app works away from home.
+7. At the end, it gives you the steps to turn off iCloud Photos and drop to Apple's free 5 GB plan. You do those steps yourself.
+
+Homecloud never deletes or changes anything in iCloud. You can also run every step yourself, without Claude Code. See [Do it by hand](#do-it-by-hand).
+
+If you are Claude Code or another AI agent: read [PROMPT.md](PROMPT.md) and follow it. Explain both paths and wait for the person's pick before you run anything.
+
+## Two ways to move your photos
+
+Both ways are fine choices, and both end the same way: your photos in Immich on your own computer. [docs/two-paths.md](docs/two-paths.md) compares them in full.
+
+- **Path A: sign in to iCloud.com.** `scripts/icloud.py` downloads every original from iCloud's servers, on a Mac, Windows, or Linux, also straight to an external drive. It counts your library before it starts and checks every file against iCloud's own list. You type your Apple Account password in your own Terminal window, and it goes only to Apple. Until you log out, a session key on the computer opens what iCloud.com opens. The script is unofficial, so a change at Apple can break it.
+- **Path B: no sign-in.** Apple's own apps download the originals with the sign-in you already have: the Photos app on a Mac, the Immich app on your iPhone, iCloud for Windows, or Apple's data copy at privacy.apple.com. Nobody asks for your Apple password, and no key stays on the computer. It is slower for a big library.
+
+Path B fits best if your Apple account holds a lot of sensitive data, or if you don't want any key on the computer. Path A fits best for a big library, for Windows or Linux, or for a copy straight to an external drive.
+
+## Four ways to run it
+
+Claude Code asks you three yes-or-no questions and picks one of these modes for you. Each mode gives something up. The prices are what you pay Apple for storage each month.
+
+### Always on, $0 a month for storage
+
+A computer stays on at home all the time. An old laptop on its charger works, or a small PC you buy once. New photos upload from your iPhone by themselves, whenever iOS lets the Immich app run. Your whole library is in the Immich app wherever you are.
+
+What you give up:
+
+- A computer that stays on and awake, and the electricity it uses. A MacBook sleeps when you close the lid, so you keep the lid open.
+- iOS decides when the Immich app uploads in the background. The sure way is to open the app on its Backup page and keep it open until the upload ends.
+- After a power cut or a restart, Immich stays down until someone signs in to the computer.
+
+### Home archive, $0 a month for storage
+
+The computer is on only some of the time. When it is on, you open the Immich app on your iPhone, and new photos go home. You keep about the last year of photos on your iPhone.
+
+What you give up:
+
+- Older photos open only while the computer is on.
+- New photos exist only on your iPhone until the computer is on and the app has uploaded them.
+
+### Hybrid, $0.99 a month for storage
+
+You keep Apple's 50 GB plan for recent photos. Once a month, older photos move to your computer.
+
+What you give up:
+
+- You still pay $0.99 a month. That is the US price, and it differs by country.
+- Older photos open only while the computer is on.
+- Each month you delete older photos from iCloud yourself, in Apple's Photos app or with iCloud for Windows. No script does that step for you.
+
+This mode is still being tested.
+
+### Offline vault, $0 a month for storage, no apps on your phone
+
+Once a month you plug your iPhone into the computer. A script copies the new photos to a drive and checks them. The script runs on the computer with Python and pymobiledevice3. On Windows it also needs Apple's device driver, which comes with the Apple Devices app or iTunes.
+
+The cable sees only the originals stored on your iPhone. With **Optimize iPhone Storage** on, many originals live only in iCloud. That is why the first full copy comes through the Photos app on a Mac, iCloud for Windows, or the Immich app.
+
+What you give up:
+
+- You have to remember to do it, and you have to be there to unlock the iPhone and type its passcode.
+- There is no phone app.
+
+### In every mode, you own the backups
+
+Keep a second copy of your photos on another drive. If the only drive with your photos dies, the photos are gone.
+
+Read [docs/modes.md](docs/modes.md) for how each mode works day to day.
+
+## What you need
+
+- A Mac or a Windows PC. A Mac needs one of the three newest versions of macOS. A PC needs 64-bit Windows 10 22H2, Windows 11 23H2, or newer. The Path A download also runs on Linux.
+- At least 8 GB of memory (RAM). Immich needs 6 GB for itself. 16 GB is more comfortable.
+- For Path A, Python 3.10 or newer. For Path B, Apple's app that downloads your photos: the Photos app on a Mac, set to sync iCloud Photos, or iCloud for Windows from the Microsoft Store on a PC. Without either, the Immich app on your iPhone can copy your library, more slowly.
+- Free disk space. Path A and the Photos app on a Mac need about 2.2 times the size of your library, because the files land in a download folder and are then copied into Immich. With the Photos app, the Photos library comes on top. The Immich app needs about 1.1 times. [docs/two-paths.md](docs/two-paths.md#side-by-side) lists each way. An external drive works for the download folder. Claude Code works out the numbers after it counts your library.
+
+- A second drive for the backup copy.
+- Claude Code, for the guided setup. It needs a paid Claude plan, such as Pro at $20 a month, or a Claude Console account. The free Claude plan does not include Claude Code. Immich and Tailscale keep running without it.
+- Your iPhone, to run the Immich app. For Path A, it gets Apple's sign-in code. For Path B, you read your photo counts on it.
+- Time. Downloading every original can take many hours.
+
+Claude Code installs what is missing after you say yes, such as Docker Desktop, Python, and the osxphotos tool for the Photos app on a Mac. Path A needs Python 3.10 or newer. The other scripts run on Python 3.9 or newer. Docker Desktop is free for personal use.
+
+## Quick start
+
+Do this on the computer that will keep your photos.
+
+1. Install the Claude desktop app with [Anthropic's desktop quickstart](https://code.claude.com/docs/en/desktop-quickstart), sign in, and open the **Code** tab.
+2. Under the prompt box, choose **Local**, then **Open folder…**, and pick a new, empty folder. Do not choose Cloud. The setup must run on your own computer.
+3. Open [PROMPT.md](PROMPT.md), copy the text in the box, and paste it into the prompt box.
+4. Answer Claude Code's questions.
+
+Pick a folder that does not sync to a cloud service. On a Mac, Desktop and Documents sync to iCloud Drive if you turned that on. On Windows, OneDrive often backs up Desktop, Documents, and Pictures. A new folder directly in your home folder is a safe choice.
+
+Claude Code never asks for your Apple password in the chat. With Path A, you type it only in your own Terminal window. With Path B, nobody asks for it. Your computer may ask for its own password when it installs Docker Desktop. That is your computer's password, and you type it in the system's window.
+
+If you prefer a terminal, install the command-line version with [Anthropic's setup guide](https://code.claude.com/docs/en/setup), run `claude` in the new folder, and paste the prompt there.
+
+## Get your photos onto the computer
+
+Pick Path A or Path B, as [docs/two-paths.md](docs/two-paths.md) explains. In the steps below, `DIR` is the folder for the copy. Pick a folder outside iCloud Drive and OneDrive, with room for the whole library.
+
+### Path A: sign in to iCloud.com
+
+`scripts/icloud.py` downloads your library from iCloud.com, the way the iCloud website loads it, with no Apple app on the computer. It runs on a Mac, Windows, or Linux, and it only reads from iCloud. It needs Python 3.10 or newer and the packages in `scripts/requirements.txt`. Its sign-in code comes from [pyicloud](https://github.com/timlaing/pyicloud). It is not made or endorsed by Apple.
+
+Know what the sign-in leaves behind before you start. The script keeps a session key in `.homecloud/session` in your home folder. That key opens the same things as a browser signed in to iCloud.com, such as Photos, iCloud Drive, and iCloud Mail, but not your Keychain passwords, Messages, or Health. Any program that runs as you on the computer could read it. [docs/two-paths.md](docs/two-paths.md#what-the-session-key-opens) has the full list. The script never saves your password. You need the key only for the one-time move, so the last step is to log out.
+
+1. Install the packages into a virtual environment. If `python3 --version` shows 3.9, install a newer Python from python.org first. On Windows, use the `venv` commands from [Do it by hand](#do-it-by-hand).
+
+   ```
+   python3 -m venv ~/homecloud-venv
+   source ~/homecloud-venv/bin/activate
+   python3 -m pip install -r scripts/requirements.txt
+   ```
+
+2. Sign in, in your own Terminal window. You type your Apple Account email, your password, and the six-digit code there. Nothing shows while you type the password. Never type it into a chat.
+
+   ```
+   python3 scripts/icloud.py login
+   ```
+
+3. Count, download, and check. `scan` only reads, and shows the count and size per year. To try a few files first, add `--limit 20` to the download. If the download stops, run the same command again. It skips finished files. On Windows, leave out `caffeinate -i` and set sleep to **Never** until the download ends.
+
+   ```
+   python3 scripts/icloud.py scan
+   caffeinate -i python3 scripts/icloud.py download --to DIR
+   python3 scripts/icloud.py verify --to DIR
+   ```
+
+   Go on only if verify reports N of N. Then import `DIR` into Immich with the `import_library.py` commands in step 4 of [Do it by hand](#do-it-by-hand). They work on Windows for this path too.
+
+4. Log out. When every file is there, `verify` asks whether to sign out. When Claude Code runs it, it signs out by itself. Add `--keep-session` to `verify` only if you will download again soon, for example in Hybrid mode. You can sign out at any time:
+
+   ```
+   python3 scripts/icloud.py logout
+   ```
+
+   `logout` ends this computer's session at Apple and deletes `.homecloud/session`. It does not touch your photos.
+
+With Advanced Data Protection on, this path works only while web access is on. On iOS 26.4 or later, open **Settings**, tap your name, tap **iCloud**, tap **iCloud.com**, and turn on **Allow Data Access**. On earlier iOS, open **Settings**, tap your name, tap **iCloud**, and turn on **Access iCloud Data on the Web**. You approve the sign-in on a trusted device, and during a long download you may need to approve it again.
+
+The download copies your originals, the video part of each Live Photo, and your edited versions, into `DIR/YYYY/MM`. Shared Albums and Recently Deleted are not included.
+
+Only Hybrid mode needs this path again: a fresh sign-in each month. The Photos app on a Mac does the monthly step with no sign-in. If Apple changes how iCloud.com works, this path can stop until the script is fixed.
+
+[docs/safety.md](docs/safety.md#path-a-the-icloudcom-sign-in) explains how the script handles your password, and [docs/troubleshooting.md](docs/troubleshooting.md#path-a-the-icloudcom-download) covers its errors.
+
+### Path B: no sign-in
+
+Apple's own apps download the originals with the sign-in you already have, and the kit copies and checks them. Pick one of four options:
+
+- **B1, the Photos app on a Mac.** Use it if Photos on your Mac syncs iCloud Photos. It is the only Path B option that checks every file against its original, byte for byte.
+- **B2, the Immich app on your iPhone, with any computer.** It needs no Apple app on the computer. For a large library it is the slowest way, because the iPhone downloads each original from iCloud before it uploads it.
+- **B3, iCloud for Windows on a PC.** Use it if drive C: has room for your whole library.
+- **B4, Apple's data copy.** Ask for it at privacy.apple.com. It can take up to 7 days.
+
+#### On a Mac: the Photos app
+
+The Photos app is already signed in to your Apple Account, so nothing asks for your password.
+
+1. Open **Photos** and choose **Photos** > **Settings**. On older macOS versions, the menu item is **Preferences**.
+2. Click **iCloud** and select **Download Originals to this Mac**.
+3. Keep Photos open, and keep the Mac plugged in, awake, and online until the download ends.
+
+If the Mac lacks space, move the Photos library to an external drive before step 2. Apple's page [Move your Photos library to save space on your Mac](https://support.apple.com/108345) says the drive must use APFS or Mac OS Extended (Journaled) and must not be your Time Machine drive. Quit Photos, drag **Photos Library** from your **Pictures** folder to the drive, and double-click it there to open it. Then, in **Photos** > **Settings** > **General**, make it the System Photo Library, so iCloud Photos keeps working with it.
+
+If Photos on this Mac does not sync iCloud Photos yet, do not turn it on in a library that already holds photos. Photos would add those photos to iCloud. Use the Immich app way instead.
+
+The kit then copies every photo and video out of the Photos library into `DIR`. It uses [osxphotos](https://github.com/RhetTbull/osxphotos), and the top of `scripts/mac/export_photos.py` shows how to install it. `check` only reads. It prints how many photos and videos the library holds, and how many originals are still only in iCloud. Wait until that second number is 0.
+
+```
+python3 scripts/mac/export_photos.py check --to DIR
+caffeinate -i python3 scripts/mac/export_photos.py export --to DIR
+```
+
+`caffeinate -i` keeps the Mac awake. `export` copies each file, then compares its size and SHA-256 checksum with the original in the Photos library. It prints "Files verified: N of N" and ends with "Result: all N files are copied and verified." If it stops, run it again. It copies only what is not done yet. Exit code 2 means some originals are still only in iCloud, so wait for Photos and run it again.
+
+The copy holds your originals, your edited versions with `_edited` in the name, the video part of each Live Photo, and next to each photo a `.xmp` file with its favorite mark and album names. Hidden photos are included. Photos in shared albums and in Recently Deleted are left out.
+
+#### On Windows: iCloud for Windows
+
+iCloud for Windows is Apple's own app. If it is new on your PC, it asks you to sign in once, as it would without Homecloud. Homecloud never sees that sign-in. Apple's guide [Set up Photos in iCloud for Windows](https://support.apple.com/guide/icloud-windows/set-up-photos-icw9f0ba665f/icloud) has the current screens.
+
+1. Install **iCloud for Windows** from the Microsoft Store, open it, and sign in if it asks.
+2. Turn on **Photos**. In its options, select **Download High-Efficiency format photos and videos** and **Download HDR videos**. Without them, iCloud for Windows turns HEIF photos into JPEG before it downloads them, and you do not get your originals. Apple lists these options for iCloud for Windows 14.2 or later.
+3. Open File Explorer. Right-click **iCloud Photos** in the navigation pane, and choose **Always keep on this device**. If it is not in the navigation pane, open **Pictures** and right-click the **iCloud Photos** folder there. Apple describes this in [Keep photos and videos downloaded in iCloud for Windows](https://support.apple.com/guide/icloud-windows/icw524278130/icloud).
+4. Set sleep to **Never** while the PC is plugged in. Keep it on until every photo shows a solid green check. A cloud icon means that the file is still only in iCloud. The iCloud icon in the notification area shows the download status.
+
+The photos land in `C:\Users\<your name>\Pictures\iCloud Photos\Photos`. Users in Apple's support forums report that iCloud for Windows cannot move this folder to another drive, so drive C: needs room for your whole library.
+
+Do not delete, move, or rename anything in the iCloud Photos folder. Apple's guide [Delete and recover photos and videos in iCloud for Windows](https://support.apple.com/guide/icloud-windows/delete-and-recover-photos-and-videos-icw5c1e2d1a7/icloud) says a delete there deletes the photo from iCloud and from all your devices.
+
+Large downloads can stall. [docs/troubleshooting.md](docs/troubleshooting.md#downloading-with-icloud-for-windows) lists the problems that users report, such as a download stuck at "Pending sync" or Live Photos without their short video, and what helped them.
+
+Then Claude Code copies the iCloud Photos folder into `DIR` with robocopy, the copy tool that comes with Windows. It never uses the robocopy options that delete or move files: `/MIR`, `/MOV`, `/MOVE`, and `/PURGE`. It checks that `DIR` has the same files with the same sizes, and shows the result as N of N. Then `scripts/immich/make_manifest.py` lists the files in `DIR`, and the import copies them into Immich, as for the other ways.
+
+#### With any computer: the Immich app on your iPhone
+
+Your iPhone already shows your whole library. The Immich app uploads it to Immich on your computer. When an original is only in iCloud, the app pulls it from iCloud into its own cache and empties the cache after the upload, as [Immich's backup docs](https://docs.immich.app/features/mobile-backup) describe.
+
+1. Install Immich on the computer and create your Immich account in the browser. Claude Code does the install with you.
+2. On the iPhone, install **Immich** from the App Store. Sign in with the computer's address on your home Wi-Fi, such as `http://192.168.1.20:2283`, and your Immich account.
+3. Tap the cloud icon at the top right to open the **Backup** screen. On the **Backup Albums** card, tap **Select** and pick **Recents**, which holds every photo on the iPhone except hidden ones. Then turn on **Enable Backup**.
+4. Keep the app open on its backup screen, with the iPhone on Wi-Fi and charging. The iPhone screen stays on while that screen is open.
+5. The backup screen shows **Total**, **Backup**, and **Remainder**. The upload is done when **Remainder** is 0.
+
+The iPhone needs free space for the app's cache. Users report that the cache can fill the iPhone while the uploads stall ([Immich issue #22850](https://github.com/immich-app/immich/issues/22850)).
+
+#### Apple's data copy at privacy.apple.com
+
+Sign in at [privacy.apple.com](https://privacy.apple.com) yourself, on Apple's own site, and ask for a copy of your data with iCloud Photos selected. Apple says the copy can take up to 7 days. It arrives as zip archives that you download and unpack into `DIR`. Then `scripts/immich/make_manifest.py` lists the photos and videos, and Claude Code compares the counts with your iPhone.
+
+#### Read your counts on the iPhone
+
+With iCloud for Windows, the Immich app, and Apple's data copy, no list gives the kit a count. You read the counts on your iPhone and type them into Claude Code. They are not secret.
+
+- In **Photos** on iOS 26 or later, open the **Collections** tab and tap your profile picture at the top right. The count is under your name. On iOS 18, tap the profile picture at the top right of Photos. On iOS 17 and earlier, scroll to the very bottom of your library.
+- Or open **Settings** > **General** > **About**, which lists **Photos** and **Videos**. Users report that this count includes hidden photos, and the Photos app leaves them out.
+
+On a Mac, `export_photos.py check` prints the count from the Photos library: "Photos and videos to copy: N".
+
+The numbers can differ a little, and Claude Code explains each difference. [docs/troubleshooting.md](docs/troubleshooting.md#the-counts-do-not-match) lists the usual reasons.
+
+## Do it by hand
+
+You can run the kit without Claude Code. You need a terminal: Terminal on a Mac, or PowerShell on Windows. The commands are for a Mac. On Windows, type `py` instead of `python3`.
+
+1. Get the kit:
+
+   ```
+   git clone https://github.com/Bodila51/iCloud-reverse-engineered homecloud
+   cd homecloud
+   ```
+
+   For Path A or Offline vault mode, also install their Python packages into a virtual environment in your home folder. Path A uses `scripts/requirements.txt`, and Offline vault uses `scripts/vault/requirements.txt`. Leave out the line you don't need.
+
+   ```
+   python3 -m venv ~/homecloud-venv
+   source ~/homecloud-venv/bin/activate
+   python3 -m pip install -r scripts/requirements.txt
+   python3 -m pip install -r scripts/vault/requirements.txt
+   ```
+
+   On Windows, create it with `py -m venv $HOME\homecloud-venv` and activate it with `$HOME\homecloud-venv\Scripts\Activate.ps1`. If PowerShell refuses, run `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser` once. Activate the environment again in each new window.
+
+2. Get your photos onto the computer with [Path A or Path B](#get-your-photos-onto-the-computer). For Path B, read your counts on the iPhone. The Immich app needs Immich on the computer first, so for that option do step 3 before step 2.
+3. Install Docker Desktop and Immich as [scripts/immich/README.md](scripts/immich/README.md) describes, and create your Immich account in the browser.
+4. Add `DIR` to Immich. With the Immich iPhone app, the app's backup already did this, so go on to step 5.
+
+   If `DIR` has a manifest, from Path A or the Photos app on a Mac, save an Immich API key and import `DIR`. `save-key` hides the key as you paste it.
+
+   ```
+   python3 scripts/immich/import_library.py save-key
+   python3 scripts/immich/import_library.py check --dir DIR
+   python3 scripts/immich/import_library.py all --dir DIR
+   ```
+
+   `check` only reads and shows the plan. `all` asks first, then copies every file into Immich. It marks your favorites, fills your albums, and archives the photos you hid in Photos. Last, it checks that Immich holds every file. Go on only if it ends with "Result: OK".
+
+   For iCloud for Windows and Apple's data copy, first list the files with `python3 scripts/immich/make_manifest.py --dir DIR`. It changes none of them. Then run the same three commands. Without a list from one of the kit's scripts, `apply` sets no favorites or albums, because those copies don't carry them.
+
+5. Compare the photos and videos in Immich with the count from `scan` or `export_photos.py check`, or with the counts from your iPhone. In Immich, open the menu under your profile picture, then **Administration** > **Server Stats**.
+6. Set up Tailscale and the Immich iPhone app with `scripts/tailscale.md`. Skip this in Offline vault mode.
+7. Set up your mode with [docs/modes.md](docs/modes.md).
+8. Copy `DIR`, with its hidden `.homecloud` folder, to your second drive, and check the copy. `COPY` is the folder on the second drive. For Path A, run `python3 scripts/icloud.py verify --to COPY`. For the Photos app on a Mac, run `python3 scripts/mac/export_photos.py verify --to COPY`. For iCloud for Windows and Apple's data copy, run `python3 scripts/immich/make_manifest.py --dir COPY` and compare its counts and total size with those for `DIR`. With the Immich iPhone app, copy Immich's library folder instead.
+9. Last, follow [docs/downgrade.md](docs/downgrade.md).
+
+## Safety promises
+
+- Your Apple password never goes into the chat. With Path B, nobody asks for it. With Path A, you type it only in your own Terminal window, it goes only to Apple, and the session key is deleted when you log out.
+- Homecloud never deletes, moves, or changes anything in iCloud, in the Photos library on your Mac, or in the iCloud Photos folder on your PC.
+- Claude Code asks before every step that installs or changes something on your computer.
+- Every copy is checked, and any mismatch stops the setup. Path A checks every file against iCloud's own list. The Photos app way compares each file with its original in the Photos library. The other Path B options compare the counts with the counts on your iPhone, as N of N.
+- Install commands come only from each tool's official docs.
+- Immich is never opened to the internet. Away from home, only your own devices reach it, through Tailscale.
+- You turn off iCloud Photos yourself, as the last step, after the checks pass and a second copy exists.
+
+[docs/safety.md](docs/safety.md) explains how each promise works.
+
+## Honest limits
+
+- Homecloud is not an Apple product. Path A uses the web interface of iCloud.com, which Apple can change at any time, and then Path A stops until the script is fixed. Path B depends on Apple's own apps. Users report that iCloud for Windows can stall on a large library, as [docs/troubleshooting.md](docs/troubleshooting.md#downloading-with-icloud-for-windows) shows. Apple's [Data and Privacy page](https://privacy.apple.com) can always send you a copy of your photos, which can take up to seven days.
+- Path A checks every file against iCloud's own list, and the Photos app way checks every file against its original. With iCloud for Windows, the Immich app, and Apple's data copy, the check compares the number of photos and videos with your iPhone.
+- Immich's own FAQ says Immich will probably not save you money once you count hardware, backup drives, and your time. Homecloud uses a computer you already have, which helps. The second drive and the electricity still cost money. A small mini PC idles at about 6 to 12 watts, and an old laptop at about 10 to 15.
+- iOS decides when the Immich app uploads in the background. The iPhone app has no setting to upload only while charging. When you open the app, it uploads on screen instead, and that upload stops when you leave the app. For a sure upload, keep the app open on its Backup page until it ends.
+- **Free Up Space** in the Immich app removes a photo from your iPhone only when Immich holds a copy with exactly the same bytes. Files that Homecloud imported from your Mac or PC can differ, and then it does not offer them. Read its preview before you confirm.
+- The first upload from the Immich app checks every photo on your iPhone. If **Optimize iPhone Storage** is on, the app downloads each full-size photo from iCloud to check it. Run that first upload on Wi-Fi with the phone charging.
+- Immich's docs recommend Linux and strongly discourage macOS and Windows, because Docker works less well there. The Immich team says it can help less with those setups. Homecloud runs Immich on a Mac or a PC anyway, inside Docker Desktop, which also uses more memory.
+- Hybrid mode is still being tested.
+- Homecloud moves photos and videos only. Your iPhone's iCloud Backup and other iCloud data still need room in your 5 GB.
+
+## FAQ
+
+### Is this made by Apple?
+
+No. Homecloud is not affiliated with Apple, and Apple does not endorse it.
+
+### Do I need my Apple password?
+
+Only for Path A. You type it in your own Terminal window, never in the chat, and the script sends it only to Apple. Path B never asks for it: Apple's own apps download your photos with the sign-in you already have. If iCloud for Windows is new on your PC, Apple's app asks you to sign in once, as it would without Homecloud. If you ever type your Apple password into the chat, change it. On your iPhone, open **Settings**, tap your name, then **Sign-In & Security**, then **Change Password**.
+
+### Does Claude see my photos?
+
+Claude Code runs on your computer and reads what the scripts print: counts, sizes, file names, and error messages. That text is part of your chat with Claude. The prompt tells Claude Code not to open your photos.
+
+### What if the download stops halfway?
+
+With Path A, run the same `download` command again. It skips the files it already has. With the Photos app on a Mac, keep Photos open until `check` reports 0 originals still only in iCloud, then run `export` again. It continues with the files that are not done yet. On Windows, see the known problems under [iCloud for Windows](#on-windows-icloud-for-windows). The Immich app continues where it stopped when you open it on its backup screen.
+
+### I use Advanced Data Protection. Does it work?
+
+Yes. With Path B, nothing changes, because Apple's own apps work with Advanced Data Protection. On a PC, Apple's page [How to turn on Advanced Data Protection for iCloud](https://support.apple.com/108756) lists iCloud for Windows 14.1 or later. With Path A, turn on web access first, as [Path A](#path-a-sign-in-to-icloudcom) describes.
+
+### What happens to my photos in iCloud?
+
+Nothing, until you decide. Turning off iCloud Photos on your devices does not delete the copy in iCloud. [docs/downgrade.md](docs/downgrade.md) explains what happens next and what you can choose.
+
+### I share iCloud+ with my family, or I pay for Apple One.
+
+Everyone in your family group uses the shared storage, so a smaller plan leaves less room for all of them. Every Apple One plan includes iCloud+ storage, so you reach the free 5 GB only by cancelling Apple One. You do that under **Settings** > your name > **Subscriptions** > **Apple One**.
+
+### Can my family use it too?
+
+Yes. Immich gives each person their own account and library. Each person can back up their own iPhone with the Immich app, signed in to their own Immich account, so nobody shares an Apple password. For access away from home, share the computer with each person in Tailscale instead of inviting them to your Tailscale account. Each person makes a free Tailscale account, and you share the Immich computer with them. A shared computer does not use one of your 6 user places, and they can reach only that computer. [docs/modes.md](docs/modes.md#share-it-with-your-family) has the steps.
+
+Whoever runs the computer can open everyone's files on its disk, and everyone's photos depend on the same second drive.
+
+### Can I go back to iCloud later?
+
+Yes. Buy iCloud storage again and turn iCloud Photos back on. Your devices upload the photos they have. To put older photos back, upload them at iCloud.com, or import them into the Photos app on a Mac that has iCloud Photos on.
+
+### Does it work with Android or Linux?
+
+The Path A download runs on Linux, and so does Immich, but the kit's guides cover macOS and Windows. Homecloud is made for the iPhone. Immich has an Android app, but Homecloud does not cover Android.
+
+### What does it cost?
+
+- Homecloud is free, under the MIT license.
+- Immich is free. You can buy an optional product key to support its developers.
+- Tailscale's Personal plan is free for non-commercial use, for up to 6 users and unlimited personal devices.
+- Docker Desktop is free for personal use.
+- Claude Code needs a paid Claude plan while you set things up, from $20 a month for Pro. You do not need it if you follow [Do it by hand](#do-it-by-hand).
+- The second drive costs money once.
+
+## Credits
+
+Homecloud uses these projects:
+
+- [Immich](https://github.com/immich-app/immich), the photo app.
+- [Tailscale](https://tailscale.com), for private access away from home.
+- [pyicloud](https://github.com/timlaing/pyicloud), for the iCloud.com sign-in and download in Path A.
+- [osxphotos](https://github.com/RhetTbull/osxphotos), for copying photos out of the Photos library on a Mac.
+- [pymobiledevice3](https://github.com/doronz88/pymobiledevice3), for copying photos from an iPhone over USB. It is under the GPL-3.0 license, and the kit installs it from PyPI as a separate package.
+- [Docker](https://www.docker.com), which runs Immich.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
+
+Not affiliated with Apple. iCloud and iPhone are trademarks of Apple Inc.
